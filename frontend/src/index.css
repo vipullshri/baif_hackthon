@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-ink-950 text-sand-100 font-sans antialiased;
+    background-image:
+      radial-gradient(at 15% 10%, rgba(32, 93, 46, 0.28) 0px, transparent 42%),
+      radial-gradient(at 85% 0%, rgba(254, 131, 22, 0.16) 0px, transparent 40%),
+      radial-gradient(at 70% 90%, rgba(39, 117, 55, 0.22) 0px, transparent 45%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+
+  /* Subtle Devanagari watermark layer */
+  .deva-watermark::before {
+    content: 'अ आ क ख भाषा सेतु ग घ म र ल';
+    @apply font-deva;
+    position: absolute;
+    inset: 0;
+    font-size: 7rem;
+    line-height: 1.1;
+    letter-spacing: 0.5rem;
+    color: rgba(240, 249, 241, 0.03);
+    pointer-events: none;
+    overflow: hidden;
+    white-space: pre-wrap;
+    z-index: 0;
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-leaf-800/60 rounded-full;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-leaf-700/70; }
+
+  ::selection { @apply bg-saffron-500/30 text-white; }
+}
+
+@layer components {
+  .glass {
+    @apply bg-white/[0.04] backdrop-blur-xl border border-white/10;
+  }
+
+  .card {
+    @apply glass rounded-3xl shadow-card;
+  }
+
+  .gradient-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(110deg, #5aad68 0%, #8ecb97 30%, #ffc171 70%, #fe8316 100%);
+    background-size: 200% auto;
+    @apply animate-sheen;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 font-semibold
+           transition-all duration-200 select-none disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn text-white shadow-leaf;
+    background-image: linear-gradient(120deg, #277537, #205d2e);
+  }
+  .btn-primary:hover:not(:disabled) {
+    @apply -translate-y-0.5 shadow-glow;
+    background-image: linear-gradient(120deg, #379046, #277537);
+  }
+
+  .btn-accent {
+    @apply btn text-ink-950 font-bold;
+    background-image: linear-gradient(120deg, #ffc171, #fe8316);
+  }
+  .btn-accent:hover:not(:disabled) { @apply -translate-y-0.5 shadow-glow; }
+
+  .btn-ghost {
+    @apply btn bg-white/5 text-sand-100 border border-white/10 hover:bg-white/10;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium
+           border border-white/10 bg-white/5;
+  }
+
+  .input {
+    @apply w-full rounded-2xl bg-ink-900/70 border border-white/10 px-4 py-3 text-sand-50
+           placeholder:text-sand-400/50 focus:outline-none focus:ring-2 focus:ring-leaf-500/60
+           focus:border-transparent transition;
+  }
+
+  .label {
+    @apply text-xs font-semibold uppercase tracking-wider text-sand-300/70;
+  }
+
+  .nav-link {
+    @apply relative px-4 py-2 rounded-xl text-sm font-medium text-sand-200/80
+           hover:text-white hover:bg-white/5 transition cursor-pointer;
+  }
+  .nav-link-active {
+    @apply text-white bg-white/[0.07];
+  }
+}
+
+@layer utilities {
+  .text-balance { text-wrap: balance; }
+  .shimmer-bg {
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  }
+}
