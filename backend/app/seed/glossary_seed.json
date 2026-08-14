@@ -1,0 +1,49 @@
+{
+  "_comment": "BhashaSetu agricultural & rural-development glossary seed. Ensures BAIF domain terms translate consistently across Marathi/Hindi/English. Edit freely or extend via the UI / API.",
+  "entries": [
+    {"category": "organization", "en": "BAIF", "hi": "बाईफ", "mr": "बायफ", "note": "Organisation name - keep verbatim"},
+    {"category": "organization", "en": "Wadi", "hi": "वाडी", "mr": "वाडी", "note": "BAIF tribal development orchard programme"},
+    {"category": "organization", "en": "self-help group", "hi": "स्वयं सहायता समूह", "mr": "बचत गट"},
+    {"category": "organization", "en": "watershed", "hi": "जलग्रहण क्षेत्र", "mr": "पाणलोट क्षेत्र"},
+
+    {"category": "livestock", "en": "livestock", "hi": "पशुधन", "mr": "पशुधन"},
+    {"category": "livestock", "en": "cattle", "hi": "पशु", "mr": "गुरे"},
+    {"category": "livestock", "en": "crossbred cow", "hi": "संकर गाय", "mr": "संकरित गाय"},
+    {"category": "livestock", "en": "buffalo", "hi": "भैंस", "mr": "म्हैस"},
+    {"category": "livestock", "en": "calf", "hi": "बछड़ा", "mr": "वासरू"},
+    {"category": "livestock", "en": "goat", "hi": "बकरी", "mr": "शेळी"},
+    {"category": "livestock", "en": "milch animal", "hi": "दुधारू पशु", "mr": "दुधाळ जनावर"},
+    {"category": "livestock", "en": "breed", "hi": "नस्ल", "mr": "जात"},
+    {"category": "livestock", "en": "artificial insemination", "hi": "कृत्रिम गर्भाधान", "mr": "कृत्रिम रेतन"},
+
+    {"category": "dairy", "en": "dairy", "hi": "डेयरी", "mr": "दुग्धव्यवसाय"},
+    {"category": "dairy", "en": "milk yield", "hi": "दूध उत्पादन", "mr": "दूध उत्पादन"},
+    {"category": "dairy", "en": "fodder", "hi": "चारा", "mr": "चारा"},
+    {"category": "dairy", "en": "green fodder", "hi": "हरा चारा", "mr": "हिरवा चारा"},
+    {"category": "dairy", "en": "silage", "hi": "साइलेज", "mr": "मुरघास"},
+    {"category": "dairy", "en": "mineral mixture", "hi": "खनिज मिश्रण", "mr": "खनिज मिश्रण"},
+
+    {"category": "health", "en": "vaccination", "hi": "टीकाकरण", "mr": "लसीकरण"},
+    {"category": "health", "en": "deworming", "hi": "कृमिनाशक", "mr": "जंतनिर्मूलन"},
+    {"category": "health", "en": "veterinary", "hi": "पशु चिकित्सा", "mr": "पशुवैद्यकीय"},
+
+    {"category": "crops", "en": "seed", "hi": "बीज", "mr": "बियाणे"},
+    {"category": "crops", "en": "sowing", "hi": "बुवाई", "mr": "पेरणी"},
+    {"category": "crops", "en": "harvest", "hi": "कटाई", "mr": "कापणी"},
+    {"category": "crops", "en": "nursery", "hi": "नर्सरी", "mr": "रोपवाटिका"},
+    {"category": "crops", "en": "horticulture", "hi": "बागवानी", "mr": "फलोत्पादन"},
+    {"category": "crops", "en": "mango", "hi": "आम", "mr": "आंबा"},
+    {"category": "crops", "en": "cashew", "hi": "काजू", "mr": "काजू"},
+
+    {"category": "agronomy", "en": "soil health", "hi": "मृदा स्वास्थ्य", "mr": "मृदा आरोग्य"},
+    {"category": "agronomy", "en": "fertilizer", "hi": "उर्वरक", "mr": "खते"},
+    {"category": "agronomy", "en": "vermicompost", "hi": "केंचुआ खाद", "mr": "गांडूळ खत"},
+    {"category": "agronomy", "en": "pesticide", "hi": "कीटनाशक", "mr": "कीटकनाशक"},
+    {"category": "agronomy", "en": "irrigation", "hi": "सिंचाई", "mr": "सिंचन"},
+    {"category": "agronomy", "en": "drip irrigation", "hi": "ड्रिप सिंचाई", "mr": "ठिबक सिंचन"},
+
+    {"category": "general", "en": "farmer", "hi": "किसान", "mr": "शेतकरी"},
+    {"category": "general", "en": "training", "hi": "प्रशिक्षण", "mr": "प्रशिक्षण"},
+    {"category": "general", "en": "demonstration", "hi": "प्रदर्शन", "mr": "प्रात्यक्षिक"}
+  ]
+}
