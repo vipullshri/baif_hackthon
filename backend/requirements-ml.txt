@@ -1,0 +1,35 @@
+# ┌────────────────────────────────────────────────────────────┐
+# │ BhashaSetu - MACHINE LEARNING dependencies                   │
+# │ Install these to enable REAL transcription, translation and  │
+# │ text-to-speech. All models are free / open-source.           │
+# │                                                            │
+# │ CPU-only install (recommended for BAIF target hardware):     │
+# │   pip install torch --index-url \                            │
+# │       https://download.pytorch.org/whl/cpu                   │
+# │   pip install -r requirements-ml.txt                         │
+# └────────────────────────────────────────────────────────────┘
+
+# ─── Deep learning runtime ────────────────────────────────────
+# torch is installed separately (CPU or CUDA build) - see install.ps1
+torch>=2.2.0
+
+# ─── Speech-to-Text (ASR) ─────────────────────────────────────
+faster-whisper==1.1.0
+
+# ─── Translation (MT) - AI4Bharat IndicTrans2 ─────────────────
+transformers==4.47.1
+sentencepiece==0.2.0
+# IndicTrans2 pre/post-processing toolkit (handles Indic script tags)
+IndicTransToolkit==1.0.3
+
+# ─── Text-to-Speech (TTS) - MMS-TTS / Indic Parler-TTS ────────
+# (transformers above already provides VitsModel for MMS-TTS)
+# Uncomment for the higher-quality Indic Parler-TTS option:
+# parler-tts @ git+https://github.com/huggingface/parler-tts.git
+
+# ─── Audio I/O ────────────────────────────────────────────────
+soundfile==0.12.1
+numpy==1.26.4
+
+# ─── Model download / caching ─────────────────────────────────
+huggingface-hub==0.27.0

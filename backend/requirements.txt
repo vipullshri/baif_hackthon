@@ -1,0 +1,23 @@
+# ┌────────────────────────────────────────────────────────────┐
+# │ BhashaSetu - CORE backend dependencies                       │
+# │ These are lightweight and let the app run in DEMO/mock mode  │
+# │ (full UI/UX, no heavy ML). Install ML models separately via  │
+# │ requirements-ml.txt for real transcription/translation/TTS.  │
+# └────────────────────────────────────────────────────────────┘
+
+# ─── Web framework ────────────────────────────────────────────
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+websockets==14.1
+
+# ─── Config & validation ──────────────────────────────────────
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# ─── Persistence ──────────────────────────────────────────────
+SQLAlchemy==2.0.36
+aiofiles==24.1.0
+
+# ─── Utilities ────────────────────────────────────────────────
+python-slugify==8.0.4
