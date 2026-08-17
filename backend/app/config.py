@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     tts_backend: str = "mms"         # mms | parler
 
     # --- Hugging Face auth (needed for gated repos like IndicTrans2) ----------
-    hf_token: str = "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"               # set via BHASHASETU_HF_TOKEN or HF_TOKEN
+    hf_token: str = ""               # set via BHASHASETU_HF_TOKEN or HF_TOKEN
 
     # --- Storage --------------------------------------------------------------
     # Absolute base path chosen at install time (install.ps1). When set, all runtime
