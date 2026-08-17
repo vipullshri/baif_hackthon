@@ -31,33 +31,40 @@ $root = Split-Path -Parent $PSScriptRoot
 $backend = Join-Path $root "backend"
 $frontend = Join-Path $root "frontend"
 
-$targetDrive = $null
-if ($env:BHASHASETU_TARGET_DRIVE) {
-    $targetDrive = $env:BHASHASETU_TARGET_DRIVE
+$targetDir = $null
+if ($env:BHASHASETU_TARGET_DIR) {
+    $targetDir = $env:BHASHASETU_TARGET_DIR
 } else {
-    $targetDrive = Read-Host "Choose a drive for the Python venv and packages (for example: D or E)"
+    $targetDir = Read-Host "Choose a directory for the installation (for example: D:\ or D:\apps)"
 }
-$targetDrive = $targetDrive.Trim().TrimEnd(':')
-if (-not ($targetDrive -match '^[A-Za-z]$')) {
-    throw "Invalid drive letter '$targetDrive'. Please enter a single drive letter like D or E."
-}
-$driveRoot = "${targetDrive}:\"
-$drive = Get-PSDrive $targetDrive -ErrorAction SilentlyContinue
-if (-not $drive) {
-    throw "Drive $driveRoot is not available. Please choose a valid drive."
+$targetDir = $targetDir.Trim().Trim('"')
+if ([string]::IsNullOrWhiteSpace($targetDir)) {
+    throw "No directory was provided. Please enter a directory like D:\ or D:\apps."
 }
 
-$venv = if ($env:BHASHASETU_VENV_DIR) { $env:BHASHASETU_VENV_DIR } else { Join-Path "${targetDrive}:" "venvs\baif_hackthon\.venv" }
+# Everything lives under a single "translationService" parent folder inside the
+# directory the user chose.
+$baseDir = Join-Path $targetDir "translationService"
+New-Item -ItemType Directory -Force -Path $baseDir | Out-Null
+$baseDir = (Resolve-Path $baseDir).Path
+Write-Host "  Installing into: $baseDir" -ForegroundColor Gray
+
+# Derive the drive from the resolved base dir for the free-space check.
+$targetDrive = ($baseDir -replace '^([A-Za-z]):.*$', '$1')
+
+$venv = if ($env:BHASHASETU_VENV_DIR) { $env:BHASHASETU_VENV_DIR } else { Join-Path $baseDir ".venv" }
 $py = Join-Path $venv "Scripts\python.exe"
-$cacheDir = if ($env:BHASHASETU_PIP_CACHE_DIR) { $env:BHASHASETU_PIP_CACHE_DIR } else { Join-Path "${targetDrive}:" "pip-cache" }
+$cacheDir = if ($env:BHASHASETU_PIP_CACHE_DIR) { $env:BHASHASETU_PIP_CACHE_DIR } else { Join-Path $baseDir "pip-cache" }
+$modelsDir = if ($env:BHASHASETU_MODELS_DIR) { $env:BHASHASETU_MODELS_DIR } else { Join-Path $baseDir "models" }
 
 $env:PIP_CACHE_DIR = $cacheDir
 $env:PIP_DOWNLOAD_CACHE = $cacheDir
+$env:BHASHASETU_MODELS_DIR = $modelsDir
 if ($env:BHASHASETU_TMP_DIR) {
     $env:TEMP = $env:BHASHASETU_TMP_DIR
     $env:TMP = $env:BHASHASETU_TMP_DIR
 } else {
-    $tmpDir = Join-Path "${targetDrive}:" "tmp"
+    $tmpDir = Join-Path $baseDir "tmp"
     $env:TEMP = $tmpDir
     $env:TMP = $tmpDir
 }
@@ -67,22 +74,21 @@ function Info($msg) { Write-Host "  $msg" -ForegroundColor Gray }
 function Warn($msg) { Write-Host "  ! $msg" -ForegroundColor Yellow }
 
 Write-Host @"
-
- ___ _              _          ___    _       
-| _ ) |_  __ _ ___| |_  __ _ / __| ___| |_ _  _ 
-| _ \ ' \/ _` / __| ' \/ _` |\__ \/ -_)  _| || |
-|___/_||_\__,_\___|_||_\__,_||___/\___|\__|\_,_|
-                                         
+ ____  _               _           ____       _
+| __ )| |__   __ _ ___| |__   __ _/ ___|  ___| |_ _   _
+|  _ \| '_ \ / _` / __| '_ \ / _` \___ \ / _ \ __| | | |
+| |_) | | | | (_| \__ \ | | | (_| |___) |  __/ |_| |_| |
+|____/|_| |_|\__,_|___/_| |_|\__,_|____/ \___|\__|\__,_|
   Language Bridge for BAIF - Marathi . Hindi . English
 "@ -ForegroundColor Cyan
 
-# -- 1. Python ---------------------------------------------------
+# -- 1. Python -----------------------------------------------------------------
 Step "Checking Python"
 $pythonCmd = $null
 foreach ($c in @("py", "python")) {
-    if (Get-Command $c -ErrorAction SilentlyContinue) { 
+    if (Get-Command $c -ErrorAction SilentlyContinue) {
         $pythonCmd = $c
-        break 
+        break
     }
 }
 if (-not $pythonCmd) {
@@ -127,12 +133,12 @@ if ($pyMajor -ne 3 -or $pyMinor -lt 10 -or $pyMinor -gt 13) {
     Warn "Unsupported Python version: $pyVersionOutput"
     Warn "This project needs Python 3.10, 3.11, 3.12 or 3.13."
     Warn "Install a supported version and rerun the script."
-    Warn "Example: py -3.12 -m venv D:\venvs\baif_hackthon\.venv"
+    Warn "Example: py -3.12 -m venv 'D:\translationService\.venv'"
     exit 1
 }
 Info "Python version $pyVersionOutput is supported."
 
-# -- 2. Virtual environment --------------------------------------
+# -- 2. Virtual environment ----------------------------------------------------
 Step "Creating virtual environment"
 $driveInfo = Get-PSDrive $targetDrive -ErrorAction SilentlyContinue
 if ($driveInfo) {
@@ -149,12 +155,13 @@ if (Test-Path $py) {
 } else {
     New-Item -ItemType Directory -Force -Path (Split-Path $venv -Parent) | Out-Null
     New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $modelsDir | Out-Null
     New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
     & $pythonCmd -m venv $venv
     Info "Created $venv"
 }
 
-# -- 3. Rust toolchain check ------------------------------------
+# -- 3. Rust toolchain check ---------------------------------------------------
 Step "Checking Rust toolchain"
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue) -or -not (Get-Command rustc -ErrorAction SilentlyContinue)) {
     Warn "Rust is required to build pydantic-core from source."
@@ -164,13 +171,13 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue) -or -not (Get-Command
 }
 Info "Rust toolchain detected."
 
-# -- 4. Core dependencies ----------------------------------------
+# -- 4. Core dependencies ------------------------------------------------------
 Step "Installing core dependencies"
 & $py -m pip install --upgrade pip | Out-Null
 & $py -m pip install -r (Join-Path $backend "requirements.txt")
 Info "Core API dependencies installed."
 
-# -- 5. FFmpeg check ---------------------------------------------
+# -- 5. FFmpeg check -----------------------------------------------------------
 Step "Checking FFmpeg (optional in demo mode)"
 if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
     Info "FFmpeg is available."
@@ -178,15 +185,16 @@ if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
     Warn "FFmpeg not found. Needed for real audio/video. Install with: winget install Gyan.FFmpeg"
 }
 
-# -- 6. Live mode (optional) -------------------------------------
+# -- 6. Live mode (optional) ---------------------------------------------------
 if ($Live) {
     Step "Installing ML stack (live mode)"
     & $py -m pip install -r (Join-Path $backend "requirements-ml.txt")
     Step "Downloading open models"
+    Info "Models will be stored in $modelsDir"
     & $py (Join-Path $PSScriptRoot "download_models.py")
 }
 
-# -- 7. Frontend build (optional) --------------------------------
+# -- 7. Frontend build (optional) ----------------------------------------------
 if ($BuildFrontend) {
     Step "Building React frontend"
     if (Get-Command npm -ErrorAction SilentlyContinue) {
@@ -200,16 +208,16 @@ if ($BuildFrontend) {
     }
 }
 
-# -- Done --------------------------------------------------------
+# -- Done ----------------------------------------------------------------------
 Step "Setup complete"
 Write-Host ""
 Write-Host "  Start BhashaSetu:" -ForegroundColor Green
 Write-Host "    cd backend" -ForegroundColor White
 if ($Live) {
-    Write-Host "    `$env:BHASHASETU_ENABLE_MODELS = 'true'" -ForegroundColor White
+    Write-Host "    $env:BHASHASETU_ENABLE_MODELS = 'true'" -ForegroundColor White
 }
 
-$startupCmd = '    & "' + $py + '" -m uvicorn app.main:app --host 127.0.0.1 --port 8000'
+$startupCmd = '  & ""' + $py + '"" -m uvicorn app.main:app --host 127.0.0.1 --port 8000'
 Write-Host $startupCmd -ForegroundColor White
 Write-Host ""
 Write-Host "  Then open http://127.0.0.1:8000" -ForegroundColor Cyan
