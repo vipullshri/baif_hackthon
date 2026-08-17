@@ -1,6 +1,3 @@
-Here is the complete, stitched Python script transcribed from the provided screenshots:
-
-```python
 """REST + WebSocket API routes."""
 from __future__ import annotations
 
@@ -357,5 +354,3 @@ def remove_glossary_entry(entry_id: str, db: Session = Depends(get_db)):
     if not glossary.delete_entry(db, entry_id):
         raise HTTPException(404, "Glossary entry not found")
     db.commit()
-
-```
