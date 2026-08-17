@@ -20,7 +20,7 @@ faster-whisper==1.1.0
 transformers==4.47.1
 sentencepiece==0.2.0
 # IndicTrans2 pre/post-processing toolkit (handles Indic script tags)
-IndicTransToolkit==1.0.3
+IndicTransToolkit==1.1.1
 
 # ─── Text-to-Speech (TTS) - MMS-TTS / Indic Parler-TTS ────────
 # (transformers above already provides VitsModel for MMS-TTS)

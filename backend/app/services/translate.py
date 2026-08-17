@@ -21,6 +21,17 @@ from app.languages import get_language
 
 logger = logging.getLogger(__name__)
 
+def _hf_auth() -> dict:
+
+    import os
+    token = (
+        settings.hf_token
+        or os.environ.get("HF_TOKEN")
+        or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        or ""
+    ).strip()
+    return {"token": token} if token else {}
+
 # Split text into sentences on Latin + Devanagari terminators while keeping them.
 _SENT_SPLIT = re.compile(r"(?<=[.!?।॥])\s+")
 
@@ -84,8 +95,8 @@ class IndicTrans2Backend(TranslatorBackend):
             from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
             logger.info("Loading IndicTrans2 model '%s'...", model_name)
-            tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-            mdl = AutoModelForSeq2SeqLM.from_pretrained(model_name, trust_remote_code=True)
+            tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, **_hf_auth())
+            mdl = AutoModelForSeq2SeqLM.from_pretrained(model_name, trust_remote_code=True, **_hf_auth())
             mdl.eval()
             if settings.device == "cuda":
                 mdl = mdl.to("cuda")
