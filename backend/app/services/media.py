@@ -35,13 +35,14 @@ def media_kind(filename: str) -> str:
         return "audio"
     return "unknown"
 
-def _run(cmd: list[str]) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(
             cmd,
             check=True,
             capture_output=True,
             text=True,
+            cwd=str(cwd) if cwd is not None else None,
         )
     except FileNotFoundError as exc:  # ffmpeg not installed
         raise MediaError("FFmpeg is not installed or not on PATH.") from exc
@@ -98,10 +99,12 @@ def _escape_subtitle_path(srt_path: Path) -> str:
 
 def burn_subtitles(video_in: str | Path, srt_path: str | Path, video_out: str | Path) -> Path:
     """Render subtitles permanently onto the video (hard-subs)."""
-    video_out = Path(video_out)
+    video_in = Path(video_in).resolve()
+    srt_path = Path(srt_path).resolve()
+    video_out = Path(video_out).resolve()
     video_out.parent.mkdir(parents=True, exist_ok=True)
     style = "FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3"
-    vf = f"subtitles='{_escape_subtitle_path(Path(srt_path))}':force_style='{style}'"
+    vf = f"subtitles='{srt_path.name}':force_style='{style}'"
     _run(
         [
             "ffmpeg", "-y",
@@ -109,7 +112,8 @@ def burn_subtitles(video_in: str | Path, srt_path: str | Path, video_out: str | 
             "-vf", vf,
             "-c:a", "copy",
             str(video_out),
-        ]
+        ],
+        cwd=srt_path.parent  # FFmpeg needs to find the SRT in the same dir
     )
     return video_out
 

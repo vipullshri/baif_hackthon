@@ -117,16 +117,23 @@ class IndicTrans2Backend(TranslatorBackend):
         tok, mdl, torch = self._get(self._model_name(src, tgt))
         ip = self._ip()
 
-        batch = ip.preprocess_batch(sentences, src_lang=src_flores, tgt_lang=tgt_flores)
-        inputs = tok(batch, truncation=True, padding="longest", return_tensors="pt", max_length=256)
-        if settings.device == "cuda":
-            inputs = {k: v.to("cuda") for k, v in inputs.items()}
-        with torch.no_grad():
-            generated = mdl.generate(
-                **inputs, max_length=256, num_beams=5, num_return_sequences=1
-            )
-        decoded = tok.batch_decode(generated, skip_special_tokens=True)
-        return ip.postprocess_batch(decoded, lang=tgt_flores)
+        outputs: list[str] = []
+        size = max(1, settings.mt_batch_size)
+        for i in range(0, len(sentences), size):
+            chunk = sentences[i : i + size]  
+            batch = ip.preprocess_batch(chunk, src_lang=src_flores, tgt_lang=tgt_flores)
+            inputs = tok(batch, truncation=True, padding="longest", return_tensors="pt", max_length=256)
+            if settings.device == "cuda":
+                inputs = {k: v.to("cuda") for k, v in inputs.items()}
+            with torch.no_grad():
+                generated = mdl.generate(
+                    **inputs, max_length=256, num_beams=5, num_return_sequences=1
+                )
+            decoded = tok.batch_decode(generated, skip_special_tokens=True)
+            outputs.extend(ip.postprocess_batch(decoded, lang=tgt_flores))
+            del inputs, generated
+            logger.info("IndicTrans2 translated %d %d sentences", min(i + size, len(sentences)), len(sentences))
+        return outputs
 
 
 # ----------------------------------------------------------------------
@@ -165,10 +172,20 @@ class NLLBBackend(TranslatorBackend):
         tok, mdl, torch = self._load()
         tok.src_lang = get_language(src).flores
         tgt_id = tok.convert_tokens_to_ids(get_language(tgt).flores)
-        inputs = tok(sentences, return_tensors="pt", padding=True, truncation=True, max_length=256)
-        with torch.no_grad():
-            generated = mdl.generate(**inputs, forced_bos_token_id=tgt_id, max_length=256, num_beams=5)
-        return tok.batch_decode(generated, skip_special_tokens=True)
+
+        outputs: list[str] = []
+        size = max(1, settings.mt_batch_size)
+
+        for i in range(0, len(sentences), size):
+            chunk = sentences[i:i + size]
+            inputs = tok(chunk, return_tensors="pt", padding=True, truncation=True, max_length=256)
+            with torch.no_grad():
+                generated = mdl.generate(**inputs, forced_bos_token_id=tgt_id, max_length=256, num_beams=5)
+            decoded = tok.batch_decode(generated, skip_special_tokens=True)
+            outputs.extend(decoded)
+            del inputs, generated
+            logger.info("NLLB translated %d %d sentences", min(i + size, len(sentences)), len(sentences))
+        return outputs
 
 
 # ----------------------------------------------------------------------

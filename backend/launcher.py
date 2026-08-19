@@ -1,13 +1,14 @@
 """
-BhashaSetu - Windows desktop launcher (PyInstaller entry point).
+BhashaSetu — Windows desktop launcher (PyInstaller entry point).
 
 Boots the FastAPI/uvicorn server on a free local port, opens the default browser
 at the app, and shows a small control window so non-technical users can re-open
 the app or quit cleanly.
 
-Runtime data (SQLite db, uploads, outputs, model cache) is written to
-`%LOCALAPPDATA%\BhashaSetu` so the install directory stays read-only and no
-administrator rights are required.
+Runtime data (SQLite db, uploads, outputs, model cache, logs) is written under a
+single base directory. When the app is installed with a configured base, that is
+used; otherwise it defaults to `%LOCALAPPDATA%\\BhashaSetu` so the install
+directory stays read-only and no administrator rights are required.
 """
 from __future__ import annotations
 
@@ -26,10 +27,56 @@ PREFERRED_PORT = 8000
 _FONT = "Segoe UI"
 
 
-def _writable_root() -> Path:
-    """Per-user writable data directory (works for portable and installed runs)."""
+def _base_dir_in_env_file() -> bool:
+    """True if the bundled `.env` already defines a non-empty base_dir."""
+    if getattr(sys, "frozen", False):
+        backend_dir = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    else:
+        backend_dir = Path(__file__).resolve().parent
+    env_file = backend_dir / ".env"
+    if not env_file.exists():
+        return False
+    try:
+        lines = env_file.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("BHASHASETU_BASE_DIR") and "=" in stripped:
+            if stripped.split("=", 1)[1].strip().strip('"'):
+                return True
+    return False
+
+
+def _bootstrap_base_dir() -> None:
+    """Decide the single storage base *before* app.config is ever imported.
+
+    Precedence: an explicit `BHASHASETU_BASE_DIR` env var, then a `base_dir`
+    already present in the bundled `.env` (the app reads it itself), otherwise
+    a per-user writable default under `%LOCALAPPDATA%\\BhashaSetu`.
+    """
+    if os.environ.get("BHASHASETU_BASE_DIR", "").strip():
+        return
+    if _base_dir_in_env_file():
+        return  # app.config will pick this up from .env
     base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    root = Path(base) / APP_NAME
+    os.environ["BHASHASETU_BASE_DIR"] = str(Path(base) / APP_NAME)
+
+
+def _writable_root() -> Path:
+    """Per-user writable directory for launcher logs/state, under the base dir.
+
+    Resolves via app settings (`<base>/data/logs`). Falls back to
+    `%LOCALAPPDATA%\\BhashaSetu` only if settings can't be loaded yet (e.g. a
+    crash before bootstrap).
+    """
+    try:
+        from app.config import settings
+
+        root = settings.logs_path
+    except Exception:  # noqa: BLE001 - pre-config fallback
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        root = Path(base) / APP_NAME
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -68,16 +115,12 @@ def _find_free_port(host: str, preferred: int) -> int:
 
 
 def _configure_environment() -> None:
-    """Point the app at writable, per-user storage *before* it is imported."""
-    root = _writable_root()
-    data_dir = root / "data"
-    models_dir = root / "models"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    models_dir.mkdir(parents=True, exist_ok=True)
+    """Point the app at writable, per-user storage *before* it is imported.
 
-    os.environ.setdefault("BHASHASETU_DATA_DIR", str(data_dir))
-    os.environ.setdefault("BHASHASETU_MODELS_DIR", str(models_dir))
-    os.environ.setdefault("HF_HOME", str(models_dir))
+    The storage base is already decided by `_bootstrap_base_dir()`; the app
+    derives data/models/tmp/logs from it (see app.config). Here we only pin the
+    host and make a bundled FFmpeg discoverable.
+    """
     os.environ.setdefault("BHASHASETU_HOST", HOST)
 
     # Make a bundled FFmpeg (a `bin/ffmpeg.exe` next to the resources or exe)
@@ -159,7 +202,7 @@ def _run_control_window(url: str, server) -> None:
     root.protocol("WM_DELETE_WINDOW", _quit)
 
     tk.Label(
-        root, text="भाषासेतु · BhashaSetu", fg="#f4b740", bg="#0f1d17",
+        root, text="भाषा साथी · Bhasha Saathi", fg="#f4b740", bg="#0f1d17",
         font=(_FONT, 15, "bold"),
     ).pack(pady=(22, 2))
     tk.Label(
@@ -176,7 +219,7 @@ def _run_control_window(url: str, server) -> None:
     btns = tk.Frame(root, bg="#0f1d17")
     btns.pack()
     tk.Button(
-        btns, text="Open BhashaSetu", width=18, relief="flat",
+        btns, text="Open Bhasha Saathi", width=18, relief="flat",
         bg="#1a6b3f", fg="white", activebackground="#22824f", cursor="hand2",
         command=lambda: webbrowser.open(url),
     ).grid(row=0, column=0, padx=6)
@@ -200,6 +243,7 @@ def _run_console(url: str, server) -> None:
 
 def main() -> int:
     multiprocessing.freeze_support()
+    _bootstrap_base_dir()
     _redirect_std_streams()
     _configure_environment()
 

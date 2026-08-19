@@ -141,6 +141,7 @@ def _run(job_id: str) -> None:
     _update(job_id, stage="translated", progress=65, translated_text=translated_text, segments=timed_segments)
 
     srt_rel = vtt_rel = audio_rel = video_rel = None
+    audio_out = None
 
     # --- 3. Text-to-Speech (voice-over) -------------------------------
     if snapshot["generate_tts"]:
@@ -153,6 +154,7 @@ def _run(job_id: str) -> None:
     has_timings = snapshot["input_type"] != "text" and any(
         seg["end"] > seg["start"] for seg in timed_segments
     )
+    srt_out = None
     if snapshot["generate_subtitles"] and has_timings:
         _update(job_id, stage="building-subtitles", progress=88)
         sub_segments = [
@@ -165,15 +167,27 @@ def _run(job_id: str) -> None:
         srt_rel = storage.rel_to_data(srt_out)
         vtt_rel = storage.rel_to_data(vtt_out)
 
-    # --- 5. Burned-in captions (video only) ---------------------------
-    if snapshot["burn_subtitles"] and snapshot["input_type"] == "video" and media.ffmpeg_available():
+    # --- 5. Produces a translated video (video input only) ---------------------------
+    if snapshot["input_type"] == "video" and  media.ffmpeg_available():
         try:
-            _update(job_id, stage="burning-captions", progress=94)
-            video_out = out_dir / "captioned.mp4"
-            media.burn_subtitles(snapshot["input_path"], srt_out, video_out)
-            video_rel = storage.rel_to_data(video_out)
+            base_video = snapshot["input_path"]
+
+            #5.a Replace the original audio with the generated voice-over (if any)
+            if audio_out is not None:
+                _update(job_id, stage="dubbing-video", progress=91)
+                dubbed_out = out_dir / "dubbed.mp4"
+                media.replace_audio(base_video, audio_out, dubbed_out)
+                base_video = dubbed_out
+                video_rel = storage.rel_to_data(dubbed_out)
+
+            #5.b Burn-in the translated subtitles (if any)
+            if snapshot["burn_subtitles"] and srt_out is not None:    
+                _update(job_id, stage="burning-captions", progress=94)
+                video_out = out_dir / "captioned.mp4"
+                media.burn_subtitles(base_video, srt_out, video_out)
+                video_rel = storage.rel_to_data(video_out)
         except media.MediaError as exc:
-            logger.warning("Caption burn-in failed for %s: %s", job_id, exc)
+            logger.warning("Video render failed for %s: %s", job_id, exc)
 
     _update(
         job_id,
