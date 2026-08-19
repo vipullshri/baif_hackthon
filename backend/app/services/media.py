@@ -15,16 +15,20 @@ from pathlib import Path
 VIDEO_EXTS = {".mp4", ".mov", ".avi", ".wmv", ".mkv", ".flv", ".webm"}
 AUDIO_EXTS = {".mp3", ".wav", ".aac", ".m4a", ".flac", ".wma", ".ogg"}
 
+
 class MediaError(RuntimeError):
     """Raised when an FFmpeg operation fails."""
+
 
 @lru_cache
 def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
 
+
 @lru_cache
 def ffprobe_available() -> bool:
     return shutil.which("ffprobe") is not None
+
 
 def media_kind(filename: str) -> str:
     """Classify a filename as 'audio', 'video' or 'unknown'."""
@@ -34,6 +38,7 @@ def media_kind(filename: str) -> str:
     if ext in AUDIO_EXTS:
         return "audio"
     return "unknown"
+
 
 def _run(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess:
     try:
@@ -48,6 +53,7 @@ def _run(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedP
         raise MediaError("FFmpeg is not installed or not on PATH.") from exc
     except subprocess.CalledProcessError as exc:
         raise MediaError(f"FFmpeg failed: {exc.stderr[-800:]}") from exc
+
 
 def probe_duration(path: str | Path) -> float | None:
     """Return media duration in seconds, or None if it cannot be determined."""
@@ -68,11 +74,12 @@ def probe_duration(path: str | Path) -> float | None:
     except (MediaError, KeyError, ValueError, json.JSONDecodeError):
         return None
 
+
 def extract_audio(input_path: str | Path, out_wav: str | Path, sample_rate: int = 16000) -> Path:
     """
     Extract a mono 16 kHz PCM WAV from any audio/video file.
 
-    16 kHz mono PCM is exactly what whisper expects, so this normalises every
+    16 kHz mono PCM is exactly what Whisper expects, so this normalises every
     supported format into a single clean input.
     """
     out_wav = Path(out_wav)
@@ -90,6 +97,7 @@ def extract_audio(input_path: str | Path, out_wav: str | Path, sample_rate: int 
     )
     return out_wav
 
+
 def _escape_subtitle_path(srt_path: Path) -> str:
     """Escape a path for use inside FFmpeg's ``subtitles=`` filter (Windows-safe)."""
     p = str(srt_path).replace("\\", "/")
@@ -97,14 +105,21 @@ def _escape_subtitle_path(srt_path: Path) -> str:
     p = p.replace(":", r"\:")
     return p
 
+
 def burn_subtitles(video_in: str | Path, srt_path: str | Path, video_out: str | Path) -> Path:
-    """Render subtitles permanently onto the video (hard-subs)."""
+    """Render subtitles permanently onto the video (hard-subs).
+
+    The ``subtitles=`` filter is fragile with Windows absolute paths (the drive
+    colon and backslashes break the filter parser). To avoid that entirely we run
+    FFmpeg from the subtitle file's own directory and reference it by bare
+    filename, so no path escaping is needed.
+    """
     video_in = Path(video_in).resolve()
     srt_path = Path(srt_path).resolve()
     video_out = Path(video_out).resolve()
     video_out.parent.mkdir(parents=True, exist_ok=True)
     style = "FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=3"
-    vf = f"subtitles='{srt_path.name}':force_style='{style}'"
+    vf = f"subtitles={srt_path.name}:force_style='{style}'"
     _run(
         [
             "ffmpeg", "-y",
@@ -113,12 +128,21 @@ def burn_subtitles(video_in: str | Path, srt_path: str | Path, video_out: str | 
             "-c:a", "copy",
             str(video_out),
         ],
-        cwd=srt_path.parent  # FFmpeg needs to find the SRT in the same dir
+        cwd=srt_path.parent,
     )
     return video_out
 
+
 def replace_audio(video_in: str | Path, audio_in: str | Path, video_out: str | Path) -> Path:
-    """Replace the video's audio track with a generated voice-over."""
+    """Replace the video's audio track with a generated voice-over.
+
+    The voice-over rarely matches the source video's length exactly, which can
+    leave the tail of the clip silent or cut the audio short. We keep the video
+    stream untouched (``-c:v copy``) but re-encode the audio to AAC and pad it
+    with trailing silence (``apad``) so it always spans the full video, then trim
+    the muxed result to the video's duration (``-shortest``). This keeps the audio
+    and video aligned instead of drifting or truncating.
+    """
     video_out = Path(video_out)
     video_out.parent.mkdir(parents=True, exist_ok=True)
     _run(
@@ -129,7 +153,9 @@ def replace_audio(video_in: str | Path, audio_in: str | Path, video_out: str | P
             "-map", "0:v:0",
             "-map", "1:a:0",
             "-c:v", "copy",
-            "-shortest",
+            "-c:a", "aac",
+            "-af", "apad",       # pad voice-over with trailing silence
+            "-shortest",         # trim to the (video) stream length
             str(video_out),
         ]
     )

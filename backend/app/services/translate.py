@@ -1,7 +1,7 @@
 """
 Machine Translation (MT).
 
-Primary backend: **AI4Bharat IndicTrans2** -- the state-of-the-art open model for
+Primary backend: **AI4Bharat IndicTrans2** - the state-of-the-art open model for
 Indian languages (MIT licensed). It uses three directional checkpoints
 (en->indic, indic->en, indic->indic) which this service selects automatically.
 
@@ -21,9 +21,15 @@ from app.languages import get_language
 
 logger = logging.getLogger(__name__)
 
-def _hf_auth() -> dict:
 
+def _hf_auth() -> dict:
+    """Return kwargs to authenticate with Hugging Face for gated repos.
+
+    Reads the token from BHASHASETU_HF_TOKEN (settings.hf_token) or the standard
+    HF_TOKEN / HUGGING_FACE_HUB_TOKEN environment variables.
+    """
     import os
+
     token = (
         settings.hf_token
         or os.environ.get("HF_TOKEN")
@@ -32,8 +38,9 @@ def _hf_auth() -> dict:
     ).strip()
     return {"token": token} if token else {}
 
+
 # Split text into sentences on Latin + Devanagari terminators while keeping them.
-_SENT_SPLIT = re.compile(r"(?<=[.!?।॥])\s+")
+_SENT_SPLIT = re.compile(r"(?<=[!.?।॥])\s+")
 
 
 def split_sentences(text: str) -> list[str]:
@@ -49,9 +56,9 @@ def split_sentences(text: str) -> list[str]:
     return parts or [text]
 
 
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Backend interface
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 class TranslatorBackend(ABC):
     @abstractmethod
     def translate_batch(self, sentences: list[str], src: str, tgt: str) -> list[str]:
@@ -63,9 +70,9 @@ class TranslatorBackend(ABC):
         ...
 
 
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # IndicTrans2
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 class IndicTrans2Backend(TranslatorBackend):
     def __init__(self) -> None:
         self._models: dict[str, tuple] = {}
@@ -120,7 +127,7 @@ class IndicTrans2Backend(TranslatorBackend):
         outputs: list[str] = []
         size = max(1, settings.mt_batch_size)
         for i in range(0, len(sentences), size):
-            chunk = sentences[i : i + size]  
+            chunk = sentences[i : i + size]
             batch = ip.preprocess_batch(chunk, src_lang=src_flores, tgt_lang=tgt_flores)
             inputs = tok(batch, truncation=True, padding="longest", return_tensors="pt", max_length=256)
             if settings.device == "cuda":
@@ -132,13 +139,13 @@ class IndicTrans2Backend(TranslatorBackend):
             decoded = tok.batch_decode(generated, skip_special_tokens=True)
             outputs.extend(ip.postprocess_batch(decoded, lang=tgt_flores))
             del inputs, generated
-            logger.info("IndicTrans2 translated %d %d sentences", min(i + size, len(sentences)), len(sentences))
+            logger.info("IndicTrans2 translated %d/%d sentences", min(i + size, len(sentences)), len(sentences))
         return outputs
 
 
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # NLLB-200 (fallback / alternative)
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 class NLLBBackend(TranslatorBackend):
     def __init__(self) -> None:
         self._tok = None
@@ -172,25 +179,22 @@ class NLLBBackend(TranslatorBackend):
         tok, mdl, torch = self._load()
         tok.src_lang = get_language(src).flores
         tgt_id = tok.convert_tokens_to_ids(get_language(tgt).flores)
-
         outputs: list[str] = []
         size = max(1, settings.mt_batch_size)
-
         for i in range(0, len(sentences), size):
-            chunk = sentences[i:i + size]
+            chunk = sentences[i : i + size]
             inputs = tok(chunk, return_tensors="pt", padding=True, truncation=True, max_length=256)
             with torch.no_grad():
                 generated = mdl.generate(**inputs, forced_bos_token_id=tgt_id, max_length=256, num_beams=5)
-            decoded = tok.batch_decode(generated, skip_special_tokens=True)
-            outputs.extend(decoded)
+            outputs.extend(tok.batch_decode(generated, skip_special_tokens=True))
             del inputs, generated
-            logger.info("NLLB translated %d %d sentences", min(i + size, len(sentences)), len(sentences))
+            logger.info("NLLB translated %d/%d sentences", min(i + size, len(sentences)), len(sentences))
         return outputs
 
 
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Mock backend (demo mode)
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 class MockBackend(TranslatorBackend):
     @property
     def ready(self) -> bool:
@@ -202,9 +206,9 @@ class MockBackend(TranslatorBackend):
         return [f"{tag} {s}" for s in sentences]
 
 
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Public facade
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 class Translator:
     def __init__(self) -> None:
         self._real: TranslatorBackend | None = None
@@ -236,7 +240,6 @@ class Translator:
         sentences = split_sentences(text)
         translated = self._backend().translate_batch(sentences, src, tgt)
         return " ".join(translated).strip()
-
 
 _translator = Translator()
 

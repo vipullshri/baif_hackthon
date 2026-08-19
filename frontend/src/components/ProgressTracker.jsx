@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Check, Loader2, Mic, Languages, Volume2, Captions, Film, Sparkles } from 'lucide-react'
+import { Check, Loader2, Mic, Languages, Volume2, Captions, Film, Sparkles, X } from 'lucide-react'
 
 // Pipeline stages with the progress value at which each becomes "done".
 const STAGES = [
@@ -10,9 +10,10 @@ const STAGES = [
   { key: 'captions', label: 'Burn captions', icon: Film, at: 95, stages: ['burning-captions'] },
 ]
 
-export function ProgressTracker({ job, inputType }) {
+export function ProgressTracker({ job, inputType, onCancel }) {
   const progress = job?.progress ?? 0
   const isText = inputType === 'text'
+  const cancelling = job?.stage === 'cancelling'
   const visible = STAGES.filter((s) => {
     if (isText && (s.key === 'transcribe' || s.key === 'subs' || s.key === 'captions')) return false
     if (inputType === 'audio' && s.key === 'captions') return false
@@ -24,9 +25,23 @@ export function ProgressTracker({ job, inputType }) {
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2 font-semibold">
           <Sparkles className="w-5 h-5 text-saffron-300" />
-          {job?.status === 'completed' ? 'Translation complete' : 'Working on your translation…'}
+          {job?.status === 'completed' ? 'Translation complete'
+            : cancelling ? 'Cancelling…'
+            : 'Working on your translation…'}
         </div>
-        <span className="text-sm tabular-nums text-sand-300/70">{progress}%</span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm tabular-nums text-sand-300/70">{progress}%</span>
+          {onCancel && job?.status === 'processing' && (
+            <button
+              onClick={onCancel}
+              disabled={cancelling}
+              className="btn-ghost !p-1.5 text-sand-300/70 hover:text-red-200 disabled:opacity-50"
+              title="Cancel job"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="h-2.5 w-full rounded-full bg-white/10 overflow-hidden">

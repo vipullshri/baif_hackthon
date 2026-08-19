@@ -1,8 +1,8 @@
 """
 Application configuration.
 
-All settings are read from environment variables (prefixed `BHASHASETU_`)
-or an optional `.env` file. See `.env.example` for the full list.
+All settings are read from environment variables (prefixed ``BHASHASETU_``)
+or an optional ``.env`` file. See ``.env.example`` for the full list.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 # backend/ directory (two levels up from this file: app/config.py -> app -> backend).
 # When frozen by PyInstaller the bundled, read-only resources (app/seed, app/webui)
 # are unpacked under sys._MEIPASS, so resolve against that root instead of __file__.
@@ -22,11 +23,11 @@ if getattr(sys, "frozen", False):
 else:
     BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-# -- Storage layout - single source of truth --------------------------------
+# --- Storage layout - single source of truth --------------------------------
 # Every runtime artifact lives under exactly one base directory, split into two
-# roots: `data` (mutable app state) and `models` (downloaded weights/caches).
+# roots: ``data`` (mutable app state) and ``models`` (downloaded weights/caches).
 # The sub-folders below are the ONLY place these names are defined; both the path
-# properties and `ensure_dirs()` derive from them.
+# properties and ``ensure_dirs()`` derive from them.
 DATA_ROOT = "data"
 MODELS_ROOT = "models"
 # Project-local (portable/demo) fallback when no base_dir is configured. Models
@@ -46,52 +47,52 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # -- Server -----------------------------------------------------------------
+    # --- Server -------------------------------------------------------------
     host: str = "0.0.0.0"
     port: int = 8000
     cors_origins: str = "http://localhost:5173,http://localhost:8000"
 
-    # -- Master switch ----------------------------------------------------------
+    # --- Master switch ------------------------------------------------------
     enable_models: bool = False
     offline: bool = False
 
-    # -- Compute ----------------------------------------------------------------
-    device: str = "auto"          # auto | cpu | cuda
-    compute_type: str = "int8"    # int8 | int8_float16 | float16 | float32
+    # --- Compute ------------------------------------------------------------
+    device: str = "auto"              # auto | cpu | cuda
+    compute_type: str = "int8"        # int8 | int8_float16 | float16 | float32
 
-    # -- Models -----------------------------------------------------------------
+    # --- Models -------------------------------------------------------------
     whisper_model: str = "small"
-    mt_backend: str = "indictrans2" # indictrans2 | nllb
+    mt_backend: str = "indictrans2"  # indictrans2 | nllb
     indictrans_en_indic: str = "ai4bharat/indictrans2-en-indic-dist-200M"
     indictrans_indic_en: str = "ai4bharat/indictrans2-indic-en-dist-200M"
     indictrans_indic_indic: str = "ai4bharat/indictrans2-indic-indic-dist-320M"
     nllb_model: str = "facebook/nllb-200-distilled-600M"
-    tts_backend: str = "mms"          # mms | parler
-    mt_batch_size: int = 8 # Batch size for MT inference (affects GPU memory usage and throughput)
+    tts_backend: str = "mms"         # mms | parler
+    mt_batch_size: int = 8           # sentences translated per model.generate() call
 
-    # -- Hugging Face auth (needed for gated repos like IndicTrans2) --
-    hf_token: str = ""              # set via BHASHASETU_HF_TOKEN or HF_TOKEN
+    # --- Hugging Face auth (needed for gated repos like IndicTrans2) --------
+    hf_token: str = ""               # set via BHASHASETU_HF_TOKEN or HF_TOKEN
 
-    # -- Storage ----------------------------------------------------------------
+    # --- Storage ------------------------------------------------------------
     # The single storage knob. When set, ALL runtime artifacts live under it:
     # <base_dir>/data (uploads, outputs, library, tmp, logs, db) and
     # <base_dir>/models (downloaded weights + HF/torch caches). Leave blank for a
     # project-local (portable/demo) layout relative to backend/.
     base_dir: str = ""
 
-    # -- Limits (mirror BAIF spec) ----------------------------------------------
+    # --- Limits (mirror BAIF spec) ------------------------------------------
     max_audio_mb: int = 150
     max_video_mb: int = 200
     max_duration_min: int = 30
 
-    # -- Derived paths ----------------------------------------------------------
+    # --- Derived paths ------------------------------------------------------
     @property
     def base_path(self) -> Path | None:
         """The single install base that everything derives from.
 
-        Accepts a bare drive letter (`D` or `D:`) - expanded to
-        `<drive>:\\translationService` - or a full rooted path used as-is.
-        Returns `None` for a project-local (demo/portable) layout.
+        Accepts a bare drive letter (``D`` or ``D:``) - expanded to
+        ``<drive>:\\translationService`` - or a full rooted path used as-is.
+        Returns ``None`` for a project-local (demo/portable) layout.
         """
         b = (self.base_dir or "").strip().strip('"')
         if not b:
@@ -152,7 +153,7 @@ class Settings(BaseSettings):
     def ensure_dirs(self) -> None:
         """Create all runtime directories if they do not exist.
 
-        Derived entirely from `DATA_SUBDIRS` plus the two roots, so adding a
+        Derived entirely from ``DATA_SUBDIRS`` plus the two roots, so adding a
         sub-folder only requires editing that one constant.
         """
         data = self.data_path

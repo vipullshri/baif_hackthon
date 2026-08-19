@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
+from app.services import cancellation
 from app.services.pipeline import process_job
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,8 @@ _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bhashasetu-wor
 def submit_job(job_id: str) -> None:
     """Queue a job for background processing."""
     logger.info("Queuing job %s", job_id)
-    _executor.submit(process_job, job_id)
+    future = _executor.submit(process_job, job_id)
+    cancellation.register(job_id, future)
 
 
 def shutdown() -> None:

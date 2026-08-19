@@ -3,6 +3,7 @@ import { FileAudio, FileVideo, UploadCloud, X } from 'lucide-react'
 
 const AUDIO_EXTS = ['mp3', 'wav', 'aac', 'm4a', 'flac', 'wma', 'ogg']
 const VIDEO_EXTS = ['mp4', 'mov', 'avi', 'wmv', 'mkv', 'flv', 'webm']
+const MAX_MB = { video: 200, audio: 150 }
 
 function prettySize(bytes) {
   if (!bytes) return ''
@@ -16,12 +17,17 @@ export function Dropzone({ mode, file, onFile, onClear }) {
   const [error, setError] = useState('')
 
   const exts = mode === 'video' ? VIDEO_EXTS : AUDIO_EXTS
-  const accept = exts.map(e => `.${e}`).join(',')
+  const accept = exts.map((e) => `.${e}`).join(',')
 
   const validate = useCallback((f) => {
     const ext = f.name.split('.').pop()?.toLowerCase()
     if (!exts.includes(ext)) {
       setError(`Unsupported ${mode} format ".${ext}". Allowed: ${exts.join(', ')}`)
+      return false
+    }
+    const limitMb = MAX_MB[mode] ?? 200
+    if (f.size > limitMb * 1024 * 1024) {
+      setError(`File is ${(f.size / (1024 * 1024)).toFixed(1)} MB, which exceeds the ${limitMb} MB ${mode} limit.`)
       return false
     }
     setError('')
@@ -48,7 +54,7 @@ export function Dropzone({ mode, file, onFile, onClear }) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="font-semibold truncate">{file.name}</div>
-          <div className="text-sm text-sand-300/60">{prettySize(file.size)} • ready to translate</div>
+          <div className="text-sm text-sand-300/60">{prettySize(file.size)} &middot; ready to translate</div>
         </div>
         <button onClick={onClear} className="btn-ghost !p-2.5" title="Remove">
           <X className="w-5 h-5" />
@@ -76,7 +82,7 @@ export function Dropzone({ mode, file, onFile, onClear }) {
           Drop your {mode} here, or <span className="text-saffron-300">browse</span>
         </p>
         <p className="mt-1 text-sm text-sand-300/60">
-          {mode === 'video' ? 'MP4, MOV, AVI, WMV, MKV, FLV, WebM • up to 200 MB' : 'MP3, WAV, AAC, M4A, FLAC, WMA, OGG • up to 150 MB'}
+          {mode === 'video' ? 'MP4, MOV, AVI, WMV, MKV, FLV, WebM \u00b7 up to 200 MB' : 'MP3, WAV, AAC, M4A, FLAC, WMA, OGG \u00b7 up to 150 MB'}
         </p>
         <input
           ref={inputRef}

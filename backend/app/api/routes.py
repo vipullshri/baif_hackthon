@@ -34,12 +34,12 @@ from app.schemas import (
     TextTranslateRequest,
 )
 from app.services import asr, glossary, media, storage, tts
+from app.services import cancellation
 from app.services.jobs import submit_job
 from app.services.pipeline import process_job
 from app.services.translate import translator_ready
 
 router = APIRouter(prefix="/api")
-
 
 # --- Serialization ----------------------------------------------------
 def to_job_out(job: Job) -> JobOut:
@@ -49,7 +49,6 @@ def to_job_out(job: Job) -> JobOut:
     data.has_audio = bool(job.audio_path)
     data.has_video = bool(job.video_path)
     return data
-
 
 # --- System -----------------------------------------------------------
 @router.get("/health", response_model=HealthOut)
@@ -72,11 +71,9 @@ def health() -> HealthOut:
         },
     )
 
-
 @router.get("/languages", response_model=list[LanguageOut])
 def languages() -> list[LanguageOut]:
     return [LanguageOut(**opt) for opt in language_options()]
-
 
 # --- Text translation (synchronous) -----------------------------------
 @router.post("/translate/text", response_model=JobOut)
@@ -125,7 +122,6 @@ def translate_text_endpoint(payload: TextTranslateRequest) -> JobOut:
     process_job(job_id)
     with session_scope() as session:
         return to_job_out(session.get(Job, job_id))
-
 
 # --- Media upload (asynchronous) --------------------------------------
 @router.post("/jobs", response_model=JobOut, status_code=202)
@@ -240,7 +236,6 @@ def _clone_job(source: Job) -> Job:
         video_path=source.video_path,
     )
 
-
 # --- Job retrieval ----------------------------------------------------
 @router.get("/jobs", response_model=JobList)
 def list_jobs(limit: int = 50, offset: int = 0, db: Session = Depends(get_db)) -> JobList:
@@ -250,7 +245,6 @@ def list_jobs(limit: int = 50, offset: int = 0, db: Session = Depends(get_db)) -
     ).all()
     return JobList(items=[to_job_out(j) for j in rows], total=total)
 
-
 @router.get("/jobs/{job_id}", response_model=JobOut)
 def get_job(job_id: str, db: Session = Depends(get_db)) -> JobOut:
     job = db.get(Job, job_id)
@@ -258,19 +252,53 @@ def get_job(job_id: str, db: Session = Depends(get_db)) -> JobOut:
         raise HTTPException(404, "Job not found")
     return to_job_out(job)
 
+@router.post("/jobs/{job_id}/cancel", response_model=JobOut)
+def cancel_job(job_id: str, db: Session = Depends(get_db)) -> JobOut:
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+    if job.status in ("completed", "failed", "cancelled"):
+        return to_job_out(job)
+
+    future = cancellation.request(job_id)
+    if future is not None and future.cancel():
+        # The job was still queued and never started - cancel it outright.
+        cancellation.clear(job_id)
+        job.status = "cancelled"
+        job.stage = "cancelled"
+    else:
+        # Already running: the worker will observe the request at the next stage.
+        job.stage = "cancelling"
+    db.commit()
+    db.refresh(job)
+    return to_job_out(job)
 
 @router.delete("/jobs/{job_id}", status_code=204)
 def delete_job(job_id: str, db: Session = Depends(get_db)):
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(404, "Job not found")
-    # Remove outputs unless they are shared by another (reused) job.
+    # Stop any in-flight work before removing the record.
+    future = cancellation.request(job_id)
+    if future is not None:
+        future.cancel()
+    cancellation.clear(job_id)
+    # Remove generated outputs.
     out_dir = settings.outputs_path / job_id
     if out_dir.exists():
         shutil.rmtree(out_dir, ignore_errors=True)
+    # Remove the uploaded source file (own upload only - reused clones share the
+    # original's input path, so never delete a path another job still points to).
+    if job.input_path and not job.reused:
+        shared = db.query(Job).filter(
+            Job.input_path == job.input_path, Job.id != job_id
+        ).count()
+        if shared == 0:
+            input_abs = storage.abs_from_data(job.input_path)
+            if input_abs and input_abs.exists():
+                input_abs.unlink(missing_ok=True)
     db.delete(job)
     db.commit()
-
 
 # --- Artefact download / streaming ------------------------------------
 _KIND_MAP = {
@@ -280,7 +308,6 @@ _KIND_MAP = {
     "srt": ("srt_path", "application/x-subrip", True),
     "vtt": ("vtt_path", "text/vtt", False),
 }
-
 
 @router.get("/jobs/{job_id}/file/{kind}")
 def get_job_file(job_id: str, kind: str, download: bool = False, db: Session = Depends(get_db)):
@@ -303,7 +330,7 @@ def get_job_file(job_id: str, kind: str, download: bool = False, db: Session = D
     path = storage.abs_from_data(rel)
     if not path or not path.exists():
         raise HTTPException(404, f"Artefact '{kind}' not available for this job")
-
+    
     disposition = "attachment" if (download or force_attach) else "inline"
     return FileResponse(
         path,
@@ -311,7 +338,6 @@ def get_job_file(job_id: str, kind: str, download: bool = False, db: Session = D
         filename=path.name,
         content_disposition_type=disposition,
     )
-
 
 # --- Live progress (WebSocket) ----------------------------------------
 @router.websocket("/jobs/{job_id}/ws")
@@ -326,18 +352,16 @@ async def job_progress_ws(websocket: WebSocket, job_id: str) -> None:
                     break
                 payload = to_job_out(job).model_dump(mode="json")
             await websocket.send_json(payload)
-            if job.status in ("completed", "failed"):
+            if job.status in ("completed", "failed", "cancelled"):
                 break
             await asyncio.sleep(0.7)
     except WebSocketDisconnect:
         return
 
-
 # --- Glossary ---------------------------------------------------------
 @router.get("/glossary", response_model=list[GlossaryEntryOut])
 def get_glossary(db: Session = Depends(get_db)) -> list[GlossaryEntryOut]:
     return [GlossaryEntryOut.model_validate(e) for e in glossary.list_entries(db)]
-
 
 @router.post("/glossary", response_model=GlossaryEntryOut, status_code=201)
 def create_glossary_entry(payload: GlossaryEntryIn, db: Session = Depends(get_db)) -> GlossaryEntryOut:
@@ -347,7 +371,6 @@ def create_glossary_entry(payload: GlossaryEntryIn, db: Session = Depends(get_db
     db.commit()
     db.refresh(entry)
     return GlossaryEntryOut.model_validate(entry)
-
 
 @router.delete("/glossary/{entry_id}", status_code=204)
 def remove_glossary_entry(entry_id: str, db: Session = Depends(get_db)):
