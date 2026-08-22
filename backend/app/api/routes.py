@@ -34,13 +34,14 @@ from app.schemas import (
     TextTranslateRequest,
 )
 from app.services import asr, glossary, media, storage, tts
+from app.services import cancellation
 from app.services.jobs import submit_job
 from app.services.pipeline import process_job
 from app.services.translate import translator_ready
 
 router = APIRouter(prefix="/api")
 
-# --- Serialization -----------------------------------------------------------
+# --- Serialization ----------------------------------------------------
 def to_job_out(job: Job) -> JobOut:
     data = JobOut.model_validate(job)
     data.has_srt = bool(job.srt_path)
@@ -49,7 +50,8 @@ def to_job_out(job: Job) -> JobOut:
     data.has_video = bool(job.video_path)
     return data
 
-# --- System ------------------------------------------------------------------
+
+# --- System -----------------------------------------------------------
 @router.get("/health", response_model=HealthOut)
 def health() -> HealthOut:
     return HealthOut(
@@ -70,11 +72,13 @@ def health() -> HealthOut:
         },
     )
 
+
 @router.get("/languages", response_model=list[LanguageOut])
 def languages() -> list[LanguageOut]:
     return [LanguageOut(**opt) for opt in language_options()]
 
-# --- Text translation (synchronous) ------------------------------------------
+
+# --- Text translation (synchronous) -----------------------------------
 @router.post("/translate/text", response_model=JobOut)
 def translate_text_endpoint(payload: TextTranslateRequest) -> JobOut:
     if not is_supported(payload.target_lang):
@@ -117,13 +121,13 @@ def translate_text_endpoint(payload: TextTranslateRequest) -> JobOut:
         session.flush()
         job_id = job.id
 
-    # Text is fast -- process inline so the caller gets the result immediately.
+    # Text is fast - process inline so the caller gets the result immediately.
     process_job(job_id)
     with session_scope() as session:
         return to_job_out(session.get(Job, job_id))
 
 
-# --- Media upload (asynchronous) ---------------------------------------------
+# --- Media upload (asynchronous) --------------------------------------
 @router.post("/jobs", response_model=JobOut, status_code=202)
 async def create_media_job(
     file: UploadFile = File(...),
@@ -237,7 +241,8 @@ def _clone_job(source: Job) -> Job:
         video_path=source.video_path,
     )
 
-# --- Job retrieval -----------------------------------------------------------
+
+# --- Job retrieval ----------------------------------------------------
 @router.get("/jobs", response_model=JobList)
 def list_jobs(limit: int = 50, offset: int = 0, db: Session = Depends(get_db)) -> JobList:
     total = db.query(Job).count()
@@ -265,13 +270,13 @@ def cancel_job(job_id: str, db: Session = Depends(get_db)) -> JobOut:
 
     future = cancellation.request(job_id)
     if future is not None and future.cancel():
-        # The job was still queued and never started - cancel it outright.
+        # The job was still queued and never started -- cancel it outright.
         cancellation.clear(job_id)
         job.status = "cancelled"
         job.stage = "cancelled"
     else:
-        # Already running; the worker will observe the request at the next stage.
-        job.status = "cancelling"
+        # Already running: the worker will observe the request at the next stage.
+        job.stage = "cancelling"
     db.commit()
     db.refresh(job)
     return to_job_out(job)
@@ -284,9 +289,10 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
         raise HTTPException(404, "Job not found")
     # Stop any in-flight work before removing the record.
     future = cancellation.request(job_id)
-    if future is not None:
-        future.cancel()
-    cancellation.clear(job_id)
+    should_clear_request = future is not None and future.cancel()
+    if should_clear_request:
+        # The job was still queued and never started -- cancel it outright.
+        cancellation.clear(job_id)
     # Remove generated outputs.
     out_dir = settings.outputs_path / job_id
     if out_dir.exists():
@@ -305,7 +311,7 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
     db.commit()
 
 
-# --- Artefact download / streaming -------------------------------------------
+# --- Artefact download / streaming ------------------------------------
 _KIND_MAP = {
     "input": ("input_path", None, False),
     "audio": ("audio_path", "audio/wav", False),
@@ -313,6 +319,7 @@ _KIND_MAP = {
     "srt": ("srt_path", "application/x-subrip", True),
     "vtt": ("vtt_path", "text/vtt", False),
 }
+
 
 @router.get("/jobs/{job_id}/file/{kind}")
 def get_job_file(job_id: str, kind: str, download: bool = False, db: Session = Depends(get_db)):
@@ -345,7 +352,7 @@ def get_job_file(job_id: str, kind: str, download: bool = False, db: Session = D
     )
 
 
-# --- Live progress (WebSocket) -----------------------------------------------
+# --- Live progress (WebSocket) ----------------------------------------
 @router.websocket("/jobs/{job_id}/ws")
 async def job_progress_ws(websocket: WebSocket, job_id: str) -> None:
     await websocket.accept()
@@ -364,10 +371,12 @@ async def job_progress_ws(websocket: WebSocket, job_id: str) -> None:
     except WebSocketDisconnect:
         return
 
-# --- Glossary ----------------------------------------------------------------
+
+# --- Glossary ---------------------------------------------------------
 @router.get("/glossary", response_model=list[GlossaryEntryOut])
 def get_glossary(db: Session = Depends(get_db)) -> list[GlossaryEntryOut]:
     return [GlossaryEntryOut.model_validate(e) for e in glossary.list_entries(db)]
+
 
 @router.post("/glossary", response_model=GlossaryEntryOut, status_code=201)
 def create_glossary_entry(payload: GlossaryEntryIn, db: Session = Depends(get_db)) -> GlossaryEntryOut:
@@ -378,6 +387,7 @@ def create_glossary_entry(payload: GlossaryEntryIn, db: Session = Depends(get_db
     db.commit()
     db.refresh(entry)
     return GlossaryEntryOut.model_validate(entry)
+
 
 @router.delete("/glossary/{entry_id}", status_code=204)
 def remove_glossary_entry(entry_id: str, db: Session = Depends(get_db)):

@@ -22,7 +22,7 @@ import re
 import threading
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import BACKEND_DIR
@@ -99,6 +99,16 @@ def _terms() -> list[dict]:
 
 # --- CRUD ---------------------------------------------------------------------
 def list_entries(session: Session) -> list[GlossaryEntry]:
+    en_term = func.coalesce(func.json_extract(GlossaryEntry.forms, "$.en"), "")
+    return list(
+        session.scalars(
+            select(GlossaryEntry).order_by(
+                func.lower(GlossaryEntry.category),
+                func.lower(en_term),
+                GlossaryEntry.created_at,
+            )
+        )
+    )
     return list(session.scalars(select(GlossaryEntry).order_by(GlossaryEntry.category, GlossaryEntry.en)))
 
 

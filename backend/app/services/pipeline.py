@@ -98,6 +98,9 @@ def _translate_segments_with_glossary(texts: list[str], src: str, tgt: str) -> l
     translated = translate_segments(masked, src, tgt)
     return [glossary.restore_text(tr, mp, tgt) for tr, mp in zip(translated, mappings)]
 
+def _join_segments(texts: list[str]) -> str:
+    """Join a list of segments into a single string, with spacing."""
+    return " ".join((t or "").strip() for t in texts if (t or "").strip()).strip()
 
 # --- Main entry point -------------------------------------------------------
 def process_job(job_id: str) -> None:
@@ -201,9 +204,14 @@ def _run(job_id: str) -> None:
         translated_text = source_text
         translated_segments = [s["text"] for s in segments_src]
     else:
-        translated_text = _translate_with_glossary(source_text, src, target)
-        seg_texts = [s["text"] for s in segments_src]
-        translated_segments = _translate_segments_with_glossary(seg_texts, src, target)
+        # translation quality, while media jobs translate timed segment once
+        if snapshot["input_type"] == "text":
+            translated_text = _translate_with_glossary(source_text, src, target)
+            translated_segments = [translated_text]
+        else:     
+            seg_texts = [s["text"] for s in segments_src]
+            translated_segments = _translate_segments_with_glossary(seg_texts, src, target)
+            translated_text = _join_segments(translated_segments)
 
     timed_segments = [
         {"start": s["start"], "end": s["end"], "source": s["text"], "translated": tr}
