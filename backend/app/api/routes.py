@@ -34,14 +34,13 @@ from app.schemas import (
     TextTranslateRequest,
 )
 from app.services import asr, glossary, media, storage, tts
-from app.services import cancellation
 from app.services.jobs import submit_job
 from app.services.pipeline import process_job
 from app.services.translate import translator_ready
 
 router = APIRouter(prefix="/api")
 
-# --- Serialization ----------------------------------------------------
+# --- Serialization -----------------------------------------------------------
 def to_job_out(job: Job) -> JobOut:
     data = JobOut.model_validate(job)
     data.has_srt = bool(job.srt_path)
@@ -50,7 +49,7 @@ def to_job_out(job: Job) -> JobOut:
     data.has_video = bool(job.video_path)
     return data
 
-# --- System -----------------------------------------------------------
+# --- System ------------------------------------------------------------------
 @router.get("/health", response_model=HealthOut)
 def health() -> HealthOut:
     return HealthOut(
@@ -75,7 +74,7 @@ def health() -> HealthOut:
 def languages() -> list[LanguageOut]:
     return [LanguageOut(**opt) for opt in language_options()]
 
-# --- Text translation (synchronous) -----------------------------------
+# --- Text translation (synchronous) ------------------------------------------
 @router.post("/translate/text", response_model=JobOut)
 def translate_text_endpoint(payload: TextTranslateRequest) -> JobOut:
     if not is_supported(payload.target_lang):
@@ -118,12 +117,13 @@ def translate_text_endpoint(payload: TextTranslateRequest) -> JobOut:
         session.flush()
         job_id = job.id
 
-    # Text is fast - process inline so the caller gets the result immediately.
+    # Text is fast -- process inline so the caller gets the result immediately.
     process_job(job_id)
     with session_scope() as session:
         return to_job_out(session.get(Job, job_id))
 
-# --- Media upload (asynchronous) --------------------------------------
+
+# --- Media upload (asynchronous) ---------------------------------------------
 @router.post("/jobs", response_model=JobOut, status_code=202)
 async def create_media_job(
     file: UploadFile = File(...),
@@ -144,6 +144,7 @@ async def create_media_job(
             + " | video: "
             + ", ".join(sorted(media.VIDEO_EXTS)),
         )
+
     if not is_supported(target_lang):
         raise HTTPException(400, f"Unsupported target language '{target_lang}'")
 
@@ -236,7 +237,7 @@ def _clone_job(source: Job) -> Job:
         video_path=source.video_path,
     )
 
-# --- Job retrieval ----------------------------------------------------
+# --- Job retrieval -----------------------------------------------------------
 @router.get("/jobs", response_model=JobList)
 def list_jobs(limit: int = 50, offset: int = 0, db: Session = Depends(get_db)) -> JobList:
     total = db.query(Job).count()
@@ -245,12 +246,14 @@ def list_jobs(limit: int = 50, offset: int = 0, db: Session = Depends(get_db)) -
     ).all()
     return JobList(items=[to_job_out(j) for j in rows], total=total)
 
+
 @router.get("/jobs/{job_id}", response_model=JobOut)
 def get_job(job_id: str, db: Session = Depends(get_db)) -> JobOut:
     job = db.get(Job, job_id)
     if job is None:
         raise HTTPException(404, "Job not found")
     return to_job_out(job)
+
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobOut)
 def cancel_job(job_id: str, db: Session = Depends(get_db)) -> JobOut:
@@ -267,11 +270,12 @@ def cancel_job(job_id: str, db: Session = Depends(get_db)) -> JobOut:
         job.status = "cancelled"
         job.stage = "cancelled"
     else:
-        # Already running: the worker will observe the request at the next stage.
-        job.stage = "cancelling"
+        # Already running; the worker will observe the request at the next stage.
+        job.status = "cancelling"
     db.commit()
     db.refresh(job)
     return to_job_out(job)
+
 
 @router.delete("/jobs/{job_id}", status_code=204)
 def delete_job(job_id: str, db: Session = Depends(get_db)):
@@ -300,7 +304,8 @@ def delete_job(job_id: str, db: Session = Depends(get_db)):
     db.delete(job)
     db.commit()
 
-# --- Artefact download / streaming ------------------------------------
+
+# --- Artefact download / streaming -------------------------------------------
 _KIND_MAP = {
     "input": ("input_path", None, False),
     "audio": ("audio_path", "audio/wav", False),
@@ -330,7 +335,7 @@ def get_job_file(job_id: str, kind: str, download: bool = False, db: Session = D
     path = storage.abs_from_data(rel)
     if not path or not path.exists():
         raise HTTPException(404, f"Artefact '{kind}' not available for this job")
-    
+
     disposition = "attachment" if (download or force_attach) else "inline"
     return FileResponse(
         path,
@@ -339,7 +344,8 @@ def get_job_file(job_id: str, kind: str, download: bool = False, db: Session = D
         content_disposition_type=disposition,
     )
 
-# --- Live progress (WebSocket) ----------------------------------------
+
+# --- Live progress (WebSocket) -----------------------------------------------
 @router.websocket("/jobs/{job_id}/ws")
 async def job_progress_ws(websocket: WebSocket, job_id: str) -> None:
     await websocket.accept()
@@ -358,16 +364,17 @@ async def job_progress_ws(websocket: WebSocket, job_id: str) -> None:
     except WebSocketDisconnect:
         return
 
-# --- Glossary ---------------------------------------------------------
+# --- Glossary ----------------------------------------------------------------
 @router.get("/glossary", response_model=list[GlossaryEntryOut])
 def get_glossary(db: Session = Depends(get_db)) -> list[GlossaryEntryOut]:
     return [GlossaryEntryOut.model_validate(e) for e in glossary.list_entries(db)]
 
 @router.post("/glossary", response_model=GlossaryEntryOut, status_code=201)
 def create_glossary_entry(payload: GlossaryEntryIn, db: Session = Depends(get_db)) -> GlossaryEntryOut:
-    entry = glossary.add_entry(
-        db, category=payload.category, en=payload.en, hi=payload.hi, mr=payload.mr, note=payload.note
-    )
+    forms = {code: value for code, value in (payload.forms or {}).items() if is_supported(code)}
+    if not any(v.strip() for v in forms.values()):
+        raise HTTPException(400, "At least one supported-language term is required.")
+    entry = glossary.add_entry(db, category=payload.category, forms=forms, note=payload.note)
     db.commit()
     db.refresh(entry)
     return GlossaryEntryOut.model_validate(entry)

@@ -57,6 +57,7 @@ export function CopyButton({ text, className = '' }) {
       setTimeout(() => setCopied(false), 1400)
     } catch { /* ignore */ }
   }
+
   return (
     <button onClick={copy} className={`btn-ghost !py-2 !px-3 text-xs ${className}`} title="Copy">
       {copied ? <Check className="w-4 h-4 text-leaf-300" /> : <Copy className="w-4 h-4" />}
@@ -86,7 +87,7 @@ export function EmptyState({ icon: Icon, title, subtitle, action }) {
 
 const LANG_META = {
   en: { label: 'English', native: 'EN' },
-  hi: { label: 'Hindi', native: 'हिं' },
+  hi: { label: 'Hindi', native: 'हि' },
   mr: { label: 'Marathi', native: 'म' },
   auto: { label: 'Auto-detect', native: '✨' },
 }
@@ -99,4 +100,21 @@ export function LangBadge({ code }) {
       <span className="text-sand-200">{m.label}</span>
     </span>
   )
+}
+
+// Single source of truth for job status -> user-facing label + chip tone.
+export function statusLabel(status) {
+  switch (status) {
+    case 'completed': return { label: 'Completed', tone: 'leaf' }
+    case 'failed': return { label: 'Failed', tone: 'danger' }
+    case 'cancelled': return { label: 'Cancelled', tone: 'default' }
+    case 'pending':
+    case 'processing': return { label: 'In progress', tone: 'saffron' }
+    default: return { label: status || 'Unknown', tone: 'default' }
+  }
+}
+
+export function StatusChip({ status }) {
+  const { label, tone } = statusLabel(status)
+  return <Chip tone={tone}>{label}</Chip>
 }

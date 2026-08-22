@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     mt_batch_size: int = 8           # sentences translated per model.generate() call
 
     # --- Hugging Face auth (needed for gated repos like IndicTrans2) --------
-    hf_token: str = ""               # set via BHASHASETU_HF_TOKEN or HF_TOKEN
+    hf_token: str = "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"               # set via BHASHASETU_HF_TOKEN or HF_TOKEN
 
     # --- Storage ------------------------------------------------------------
     # The single storage knob. When set, ALL runtime artifacts live under it:

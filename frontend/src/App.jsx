@@ -9,6 +9,7 @@ import { TranslatePage } from './pages/TranslatePage'
 import { LibraryPage } from './pages/LibraryPage'
 import { GlossaryPage } from './pages/GlossaryPage'
 import { AboutPage } from './pages/AboutPage'
+import { ResultPage } from './pages/ResultPage'
 
 const NAV = [
   { id: 'translate', label: 'Translate', icon: Languages },
@@ -17,16 +18,36 @@ const NAV = [
   { id: 'about', label: 'System', icon: Activity },
 ]
 
+// Minimal hash router: parses "#/view" or "#/result/:id" into { view, id }.
+function parseHash() {
+  const raw = window.location.hash.replace(/^#\/?/, '')
+  const [view, id] = raw.split('/')
+  if (view === 'result' && id) return { view: 'result', id }
+  const known = NAV.map((n) => n.id)
+  return { view: known.includes(view) ? view : 'translate', id: null }
+}
+
+function navigate(view, id) {
+  window.location.hash = view === 'result' && id ? `/result/${id}` : `/${view}`
+}
+
 export default function App() {
-  const [view, setView] = useState('translate')
+  const [route, setRoute] = useState(parseHash)
   const [languages, setLanguages] = useState([])
   const [health, setHealth] = useState(null)
   const [libKey, setLibKey] = useState(0)
+  const { view, id } = route
+
+  useEffect(() => {
+    const onHash = () => setRoute(parseHash())
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
 
   useEffect(() => {
     api.languages().then(setLanguages).catch(() => setLanguages([
       { code: 'en', name: 'English', native: 'English' },
-      { code: 'hi', name: 'Hindi', native: 'हिंदी' },
+      { code: 'hi', name: 'Hindi', native: 'हिन्दी' },
       { code: 'mr', name: 'Marathi', native: 'मराठी' },
     ]))
     api.health().then(setHealth).catch(() => {})
@@ -37,12 +58,12 @@ export default function App() {
       {/* --- Nav --- */}
       <header className="sticky top-0 z-40 glass border-b border-white/10">
         <div className="mx-auto max-w-6xl px-4 h-16 flex items-center gap-4">
-          <button onClick={() => setView('translate')}><Logo compact /></button>
+          <button onClick={() => navigate('translate')}><Logo compact /></button>
           <nav className="hidden md:flex items-center gap-1 ml-4">
             {NAV.map((n) => {
               const Icon = n.icon
               return (
-                <button key={n.id} onClick={() => setView(n.id)}
+                <button key={n.id} onClick={() => navigate(n.id)}
                   className={`nav-link flex items-center gap-1.5 ${view === n.id ? 'nav-link-active' : ''}`}>
                   <Icon className="w-4 h-4" /> {n.label}
                 </button>
@@ -58,7 +79,7 @@ export default function App() {
           {NAV.map((n) => {
             const Icon = n.icon
             return (
-              <button key={n.id} onClick={() => setView(n.id)}
+              <button key={n.id} onClick={() => navigate(n.id)}
                 className={`flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg text-[11px]
                   ${view === n.id ? 'text-saffron-300' : 'text-sand-300/60'}`}>
                 <Icon className="w-5 h-5" /> {n.label}
@@ -72,22 +93,33 @@ export default function App() {
         {view === 'translate' && <Hero />}
 
         <motion.div
-          key={view}
+          key={view + (id || '')}
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
         >
-          {view === 'translate' && <TranslatePage languages={languages} onJobDone={() => setLibKey((k) => k + 1)} />}
-          {view === 'library' && <LibraryPage refreshKey={libKey} />}
-          {view === 'glossary' && <GlossaryPage />}
+          {view === 'translate' && (
+            <TranslatePage
+              languages={languages}
+              onJobDone={() => setLibKey((k) => k + 1)}
+              onOpenResult={(jobId) => navigate('result', jobId)}
+            />
+          )}
+          {view === 'library' && (
+            <LibraryPage refreshKey={libKey} onOpenResult={(jobId) => navigate('result', jobId)} />
+          )}
+          {view === 'result' && (
+            <ResultPage id={id} onBack={() => navigate('library')} />
+          )}
+          {view === 'glossary' && <GlossaryPage languages={languages} />}
           {view === 'about' && <AboutPage health={health} />}
         </motion.div>
       </main>
 
       <footer className="border-t border-white/10 mt-8">
-        <div className="mx-auto max-w-6xl px-4 py-6 flex flex-wrap items-center gap-3 text-sm text-sand-300/50">
+        <div className="mx-auto max-w-6xl px-4 py-6 flex flex-wrap items-center gap-3 text-sm text-sand-500/50">
           <BridgeIcon className="w-6 h-6" />
-          <span>BhashaSetu — offline media translation for BAIF.</span>
+          <span>BhashaSetu - offline media translation for BAIF.</span>
           <span className="ml-auto flex items-center gap-1.5">
             <Github className="w-4 h-4" /> 100% open-source · Marathi · Hindi · English
           </span>
@@ -130,7 +162,7 @@ function Hero() {
         </h1>
         <p className="mt-4 text-lg text-sand-200/80 max-w-xl">
           Transcribe, translate, voice-over and caption <b>text, audio &amp; video</b> across
-          Marathi, Hindi &amp; English — using only free, open-source models, fully offline.
+          Marathi, Hindi &amp; English - using only free, open-source models, fully offline.
         </p>
         <div className="flex flex-wrap gap-2 mt-6">
           <span className="chip"><Type className="w-3.5 h-3.5 text-leaf-300" /> Text</span>

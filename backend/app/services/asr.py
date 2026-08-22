@@ -1,15 +1,3 @@
-"""
-Automatic Speech Recognition (ASR) via faster-whisper.
-
-faster-whisper is a CTranslate2 re-implementation of OpenAI Whisper that runs
-efficiently on CPU with int8 quantisation - ideal for BAIF's hardware. It is
-MIT-licensed and fully offline once the model is cached.
-
-When models are disabled (demo mode) or unavailable, a deterministic mock
-transcription is returned so the full pipeline and UI can still be exercised.
-"""
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass, field
 
@@ -18,13 +6,11 @@ from app.languages import get_language
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass
 class TranscriptSegment:
     start: float
     end: float
     text: str
-
 
 @dataclass
 class TranscriptionResult:
@@ -65,7 +51,7 @@ class _WhisperEngine:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
             except Exception:
                 device = "cpu"
-        if device == "cpu" and compute in {"float16", "int8_float16"}:
+        if device == "cpu" and compute in ("float16", "int8_float16"):
             compute = "int8"
         return device, compute
 
@@ -97,6 +83,7 @@ class _WhisperEngine:
             beam_size=5,
             word_timestamps=False,
         )
+
         segments = [
             TranscriptSegment(start=round(s.start, 3), end=round(s.end, 3), text=s.text.strip())
             for s in seg_iter
@@ -112,14 +99,31 @@ class _WhisperEngine:
 
 _engine = _WhisperEngine()
 
-
 def asr_ready() -> bool:
     return _engine.ready
 
 
+def _generic_mock_lines(lang_code: str) -> list[str]:
+    """Placeholder transcript for a language with no curated demo sample."""
+    from app import languages
+
+    try:
+        name = languages.get_language(lang_code).name_en
+    except ValueError:
+        name = lang_code or "the source language"
+    return [
+        f"This is a demo transcript in {name}.",
+        "Enable real models to transcribe actual audio.",
+        "BhashaSetu will translate this into your chosen language.",
+        "Thank you for trying the demo mode.",
+    ]
+
+
 def _mock_transcription(duration: float | None, source_lang: str) -> TranscriptionResult:
     """Deterministic placeholder transcript for demo mode."""
-    lang = "en" if source_lang in ("auto", "", None) else source_lang
+    from app import languages
+
+    lang = languages.default_code() if source_lang in ("auto", "", None) else source_lang
     duration = duration or 30.0
     samples = {
         "en": [
@@ -129,7 +133,7 @@ def _mock_transcription(duration: float | None, source_lang: str) -> Transcripti
             "Regular vaccination keeps your livestock healthy.",
         ],
         "hi": [
-            "बाईफ के इस कृषि प्रशिक्षण सत्र में आपका स्वागत है।",
+            "बाइफ के इस कृषि प्रशिक्षण सत्र में आपका स्वागत है।",
             "आज हम संकर पशुओं के प्रबंधन के बारे में जानेंगे।",
             "हर दिन स्वच्छ पानी और संतुलित आहार दें।",
             "नियमित टीकाकरण आपके पशुधन को स्वस्थ रखता है।",
@@ -141,7 +145,7 @@ def _mock_transcription(duration: float | None, source_lang: str) -> Transcripti
             "नियमित लसीकरण तुमच्या पशुधनाला निरोगी ठेवते.",
         ],
     }
-    lines = samples.get(lang, samples["en"])
+    lines = samples.get(lang) or _generic_mock_lines(lang)
     n = len(lines)
     step = duration / n
     segments = [

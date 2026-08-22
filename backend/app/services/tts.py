@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 _MMS_SAMPLE_RATE = 16000
 
 
-class _MMStts:
+class _MMSTts:
     """Lazy per-language MMS-TTS (VITS) voices."""
 
     def __init__(self) -> None:
@@ -74,11 +74,27 @@ class _MMStts:
         return out_wav
 
 
-_mms = _MMStts()
+_mms = _MMSTts()
 
 
 def tts_ready() -> bool:
     return _mms.ready
+
+
+def _mock_base_freq(lang_code: str) -> float:
+    """Pick a stable, per-language demo tone frequency from the registry order.
+
+    Distinct languages get distinct pitches without hardcoding a per-language
+    table, so new languages automatically get their own tone.
+    """
+    from app.languages import SUPPORTED_CODES
+
+    steps = [220.0, 247.0, 262.0, 294.0, 330.0, 349.0, 392.0, 440.0]
+    try:
+        idx = SUPPORTED_CODES.index(lang_code)
+    except ValueError:
+        idx = 0
+    return steps[idx % len(steps)]
 
 
 def _mock_synthesize(text: str, lang_code: str, out_wav: Path) -> Path:
@@ -88,7 +104,7 @@ def _mock_synthesize(text: str, lang_code: str, out_wav: Path) -> Path:
     duration = min(20.0, max(1.2, words * 0.35))  # ~0.35s per word, capped
     framerate = _MMS_SAMPLE_RATE
     n_frames = int(duration * framerate)
-    base_freq = {"en": 220.0, "hi": 247.0, "mr": 262.0}.get(lang_code, 220.0)
+    base_freq = _mock_base_freq(lang_code)
 
     with wave.open(str(out_wav), "w") as wav:
         wav.setnchannels(1)
