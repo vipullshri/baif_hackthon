@@ -62,10 +62,16 @@ async def lifespan(app: FastAPI):
     settings.apply_offline_env()
     settings.ensure_dirs()
     init_db()
+
+    asr_warm = False
+    if settings.enable_models and settings.asr_preload:
+        asr_warm = asr.preload_model()
+
     seeded = glossary.seed_glossary_if_empty()
+
     logger.info(
-        "%s v%s starting | models=%s | offline=%s | glossary_seeded=%d",
-        __app_name__, __version__, settings.enable_models, settings.offline, seeded,
+        "%s v%s starting | models=%s | offline=%s | asr_preloaded=%s | glossary_seeded=%d",
+        __app_name__, __version__, settings.enable_models, settings.offline, asr_warm, seeded,
     )
     yield
     jobs.shutdown()
@@ -87,10 +93,10 @@ app.add_middleware(
 
 app.include_router(api_router)
 
-
-# --- Serve the UI (single deployable) --------------------------------
+# --- Serve the UI (single deployable) -----------------------------------------
 # The app now relies only on the compiled React build
 # (frontend/npm run build -> app/static).
+
 _ui_root = settings.static_path
 _INDEX = "index.html"
 
@@ -104,9 +110,11 @@ if (_ui_root / _INDEX).exists():
         # Let the API 404 naturally; everything else falls back to the SPA shell.
         if full_path.startswith("api/"):
             return JSONResponse({"detail": "Not Found"}, status_code=404)
+
         candidate = _ui_root / full_path
         if full_path and candidate.is_file():
             return FileResponse(candidate)
+
         return FileResponse(_ui_root / _INDEX)
 else:
     @app.get("/", include_in_schema=False)

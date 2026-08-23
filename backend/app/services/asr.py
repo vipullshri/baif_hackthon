@@ -1,3 +1,15 @@
+"""
+Automatic Speech Recognition (ASR) via faster-whisper.
+
+faster-whisper is a CTranslate2 re-implementation of OpenAI Whisper that runs
+efficiently on CPU with int8 quantisation - ideal for BAIF's hardware. It is
+MIT-licensed and fully offline once the model is cached.
+
+When models are disabled (demo mode) or unavailable, a deterministic mock
+transcription is returned so the full pipeline and UI can still be exercised.
+"""
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
 
@@ -19,7 +31,6 @@ class TranscriptionResult:
     duration: float
     segments: list[TranscriptSegment] = field(default_factory=list)
     mock: bool = False
-
 
 class _WhisperEngine:
     """Lazy singleton wrapping the faster-whisper model."""
@@ -65,12 +76,17 @@ class _WhisperEngine:
             "Loading Whisper '%s' on %s (%s)...",
             settings.whisper_model, device, compute,
         )
-        self._model = WhisperModel(
-            settings.whisper_model,
-            device=device,
-            compute_type=compute,
-            download_root=str(settings.models_path),
-        )
+
+        kwargs = {
+            "device": device,
+            "compute_type": compute,
+            "download_root": str(settings.models_path),
+            "num_workers": max(1, int(settings.asr_num_workers)),
+        }
+        if int(settings.asr_cpu_threads) > 0:
+            kwargs["cpu_threads"] = int(settings.asr_cpu_threads)
+
+        self._model = WhisperModel(settings.whisper_model, **kwargs)
         return self._model
 
     def transcribe(self, wav_path: str, source_lang: str = "auto") -> TranscriptionResult:
@@ -79,11 +95,10 @@ class _WhisperEngine:
         seg_iter, info = model.transcribe(
             wav_path,
             language=language,
-            vad_filter=True,
-            beam_size=5,
+            vad_filter=settings.asr_vad_filter,
+            beam_size=max(1, int(settings.asr_beam_size)),
             word_timestamps=False,
         )
-
         segments = [
             TranscriptSegment(start=round(s.start, 3), end=round(s.end, 3), text=s.text.strip())
             for s in seg_iter
@@ -96,11 +111,23 @@ class _WhisperEngine:
             segments=segments,
         )
 
-
 _engine = _WhisperEngine()
+
 
 def asr_ready() -> bool:
     return _engine.ready
+
+
+def preload_model() -> bool:
+    """Warm ASR model at startup to remove first-request load latency."""
+    if not _engine.ready:
+        return False
+    try:
+        _engine._load()
+        return True
+    except Exception: # pragma: no cover - best-effort warmup
+        logger.exception("ASR preload failed")
+        return False
 
 
 def _generic_mock_lines(lang_code: str) -> list[str]:
@@ -133,7 +160,7 @@ def _mock_transcription(duration: float | None, source_lang: str) -> Transcripti
             "Regular vaccination keeps your livestock healthy.",
         ],
         "hi": [
-            "बाइफ के इस कृषि प्रशिक्षण सत्र में आपका स्वागत है।",
+            "बाएफ के इस कृषि प्रशिक्षण सत्र में आपका स्वागत है।",
             "आज हम संकर पशुओं के प्रबंधन के बारे में जानेंगे।",
             "हर दिन स्वच्छ पानी और संतुलित आहार दें।",
             "नियमित टीकाकरण आपके पशुधन को स्वस्थ रखता है।",
