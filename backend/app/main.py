@@ -19,7 +19,7 @@ from app import __app_name__, __version__
 from app.api.routes import router as api_router
 from app.config import settings
 from app.db.database import init_db
-from app.services import glossary, jobs
+from app.services import asr, glossary, jobs
 
 def _configure_logging() -> None:
     """Configure console + persistent on-disk logging.

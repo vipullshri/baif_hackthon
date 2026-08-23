@@ -80,11 +80,11 @@ function Start-BhashaSetu([string]$pythonExe) {
     }
 }
 
-function Test-CommandHealthy([string]$command, [string[]]$args) {
+function Test-CommandHealthy([string]$command, [string[]]$commandArgs) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
         return $false
     }
-    & $command @args | Out-Null
+    & $command @commandArgs | Out-Null
     return ($LASTEXITCODE -eq 0)
 }
 
@@ -260,9 +260,9 @@ if (-not $targetDir -or $targetDir -match '^\s*$') {
 # Without this, Join-Path treats it as relative and resolves against the current
 # directory (usually the C: checkout), silently installing on the wrong drive.
 if ($targetDir -match '^[A-Za-z]$') {
-    $targetDir = "$targetDir`:\`"
+    $targetDir = "$targetDir" + ":\"
 } elseif ($targetDir -match '^[A-Za-z]:$') {
-    $targetDir = "$targetDir`\"
+    $targetDir = "$targetDir" + "\"
 }
 if (-not ($targetDir -match '^[A-Za-z]:\\') -or $targetDir -match '\\\\') {
     throw "The installation path '$targetDir' is not an absolute path. Enter a full path like D:\ or D:\apps."
