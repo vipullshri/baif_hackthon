@@ -8,7 +8,7 @@ venv/
 .mypy_cache/
 
 #--Environment files
-.env
+#.env
 *.local
 
 # Node / Frontend
