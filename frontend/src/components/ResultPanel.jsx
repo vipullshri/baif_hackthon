@@ -181,24 +181,36 @@ function VideoTab({ job }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="font-semibold flex items-center gap-2">
-          <Film className="w-4 h-4 text-leaf-300" /> Video with captions
+          <Film className="w-4 h-4 text-leaf-300" /> Translated video
         </h3>
         {job.has_video && (
           <a className="btn-accent !py-2 !px-3 text-xs" href={api.fileUrl(job.id, 'video', true)}>
-            <Download className="w-4 h-4" /> Burned-in caption video
+            <Download className="w-4 h-4" /> Download video
           </a>
         )}
       </div>
       <div className="rounded-2xl overflow-hidden border border-white/10 bg-black">
-        <video controls className="w-full max-h-[460px]" crossOrigin="anonymous">
-          <source src={api.fileUrl(job.id, 'input')} />
-          {job.has_vtt && (
-            <track default kind="subtitles" srcLang={job.target_lang} label="Translated" src={api.fileUrl(job.id, 'vtt')} />
-          )}
-        </video>
+        {job.has_video ? (
+          <video key="rendered" controls className="w-full max-h-[460px]" crossOrigin="anonymous">
+            <source src={api.fileUrl(job.id, 'video')} type="video/mp4" />
+            {job.has_vtt && (
+              <track kind="subtitles" srcLang={job.target_lang} label="Translated" src={api.fileUrl(job.id, 'vtt')} />
+            )}
+          </video>
+        ) : (
+          <video key="original" controls className="w-full max-h-[460px]" crossOrigin="anonymous">
+            <source src={api.fileUrl(job.id, 'input')} />
+            {job.has_vtt && (
+              <track default kind="subtitles" srcLang={job.target_lang} label="Translated" src={api.fileUrl(job.id, 'vtt')} />
+            )}
+          </video>
+        )}
+
       </div>
       <p className="text-xs text-sand-300/50">
-        Captions are shown live from the generated subtitle track. Use the button above to download a permanently burned-in version (requires FFmpeg + the burn-in option).
+        {job.has_video
+        ? 'The video has been rendered with the translated audio and subtitles.'
+        : 'The original video is shown here. You can download the rendered video with translated audio and subtitles.'}
       </p>
     </div>
   )
