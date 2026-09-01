@@ -11,12 +11,60 @@ transcription is returned so the full pipeline and UI can still be exercised.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 
 from app.config import settings
 from app.languages import get_language
 
 logger = logging.getLogger(__name__)
+
+def _nvidia_gpu_present() -> bool:
+    """True if an NVIDIA GPU + driver is detectable (independent of torch build)."""
+    import shutil
+    import subprocess
+
+    if shutil.which("nvidia-smi") is None:
+        return False
+    try:
+        return subprocess.run(
+            ["nvidia-smi"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode == 0
+    except Exception:
+        return False
+
+
+def _register_cuda_dll_dirs() -> None:
+    """Make CUDA runtime DLLs (cublas64_12.dll, cudnn*.dll) discoverable on Windows.
+
+    faster-whisper's CTranslate2 backend loads these at runtime from the DLL search
+    path. The CUDA torch build and the nvidia-* pip wheels ship them inside
+    site-packages, but they are not on PATH by default -> 'cublas64_12.dll not found'.
+    os.add_dll_directory (Windows/Python 3.8+) adds them without touching system PATH.
+    """
+    if os.name != "nt" or not hasattr(os, "add_dll_directory"):
+        return
+    candidate_dirs: list[str] = []
+    try:
+        import torch
+        candidate_dirs.append(os.path.join(os.path.dirname(torch.__file__), "lib"))
+    except Exception:
+        pass
+    try:
+        import nvidia  # provided by nvidia-cublas-cu12 / nvidia-cudnn-cu12
+        for pkg in ("cublas", "cudnn"):
+            candidate_dirs.append(os.path.join(os.path.dirname(nvidia.__file__), pkg, "bin"))
+    except Exception:
+        pass
+    for d in candidate_dirs:
+        if d and os.path.isdir(d):
+            try:
+                os.add_dll_directory(d)
+                logger.debug("Registered CUDA DLL directory: %s", d)
+            except Exception: # pragma: no cover - defensive
+                logger.debug("Could not register CUDA DLL directory: %s", d)
 
 @dataclass
 class TranscriptSegment:
@@ -57,21 +105,25 @@ class _WhisperEngine:
         device = settings.device
         compute = settings.compute_type
         if device == "auto":
+            device = "cpu"
             try:
-                import torch
-                device = "cuda" if torch.cuda.is_available() else "cpu"
+                import ctranslate2
+                if ctranslate2.get_cuda_device_count() > 0:
+                    device = "cuda"
             except Exception:
-                device = "cpu"
+                pass
+            if device == "cpu" and _nvidia_gpu_present():
+                logger.warning(
+                    "NVIDIA GPU detected but not used. Ensure the CUDA torch build "
+                    "and nvidia-cublas-cu12 / nvidia-cudnn-cu12 are installed."
+                )
         if device == "cpu" and compute in ("float16", "int8_float16"):
             compute = "int8"
         return device, compute
 
-    def _load(self):
-        if self._model is not None:
-            return self._model
+    def _build_model(self, device: str, compute: str):
         from faster_whisper import WhisperModel
 
-        device, compute = self._resolve_device()
         logger.info(
             "Loading Whisper '%s' on %s (%s)...",
             settings.whisper_model, device, compute,
@@ -83,11 +135,34 @@ class _WhisperEngine:
             "download_root": str(settings.models_path),
             "num_workers": max(1, int(settings.asr_num_workers)),
         }
-        if int(settings.asr_cpu_threads) > 0:
+        if device == "cpu" and int (settings.asr_cpu_threads) > 0:
             kwargs["cpu_threads"] = int(settings.asr_cpu_threads)
 
-        self._model = WhisperModel(settings.whisper_model, **kwargs)
-        return self._model
+        return WhisperModel(settings.whisper_model, **kwargs)
+
+    def _load(self):
+        if self._model is not None:
+            return self._model
+
+        device, compute = self._resolve_device()
+        if device == "cuda":
+            _register_cuda_dll_dirs()
+            try:
+                self._model = self._build_model(device, compute)
+                return self._model
+            except Exception as exc:  # CUDA/DLL failure -> degrade to CPU
+                logger.warning(
+                    "GPU (cuda) load failed (%s). Falling back to CPU. "
+                    "If you expected GPU, ensure the CUDA torch build and "
+                    "nvidia-cublas-cu12 / nvidia-cudnn-cu12 are installed.",
+                    exc,
+                )
+                device = "cpu"
+                if compute in {"float16", "int8_float16"}:
+                    compute = "int8"
+
+        self._model = self._build_model(device, compute)
+        return self._model    
 
     def transcribe(self, wav_path: str, source_lang: str = "auto") -> TranscriptionResult:
         model = self._load()

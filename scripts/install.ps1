@@ -99,6 +99,54 @@ function Test-WebReachable([string]$hostName) {
     }
 }
 
+
+# -- GPU auto-detection --------------------------------------------------------
+# Detects an NVIDIA GPU via nvidia-smi and returns the matching PyTorch CUDA wheel tag
+# (e.g. "cu121"), or $null when no usable NVIDIA GPU/driver is found. CUDA is
+# NVIDIA-only, so AMD / Intel / Apple GPUs (and no-GPU boxes) correctly get $null -> CPU.
+function Get-TorchCudaTag {
+    if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) { return $null }
+    try {
+        $out = & nvidia-smi 2>$null
+    } catch {
+        return $null
+    }
+    if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
+    # nvidia-smi's header prints the max supported toolkit, e.g. "CUDA Version: 12.4".
+    $m = ($out | Select-String -Pattern 'CUDA Version:\s*([0-9]+)\.([0-9]+)' | Select-Object -First 1)
+    if (-not $m) { return "cu121" } # GPU present but version unparsed: safe default.
+    $major = [int]$m.Matches[0].Groups[1].Value
+    $minor = [int]$m.Matches[0].Groups[2].Value
+    if ($major -gt 12 -or ($major -eq 12 -and $minor -ge 4)) { return "cu124" }
+    if ($major -eq 12) { return "cu121" }
+    return $null # CUDA 11.x or older driver: fall back to CPU to avoid a bad combo.
+}
+
+# Installs torch with the correct build: the CUDA wheel + cuDNN/cuBLAS runtime (needed by
+# faster-whisper's CTranslate2 for GPU ASR) when an NVIDIA GPU is present, otherwise the
+# CPU-only wheel. Returns "cuda" or "cpu" so the caller can persist BHASHASETU_DEVICE.
+function Install-Torch([string]$pythonExe) {
+    $cudaTag = Get-TorchCudaTag
+    if ($cudaTag) {
+        Info "NVIDIA GPU detected. Installing CUDA build of PyTorch ($cudaTag)..."
+        & $pythonExe -m pip install torch --index-url "https://download.pytorch.org/whl/$cudaTag"
+        if ($LASTEXITCODE -ne 0) {
+            Warn "CUDA torch install failed; falling back to the CPU build."
+            & $pythonExe -m pip install torch --index-url "https://download.pytorch.org/whl/cpu"
+            return "cpu"
+        }
+        Info "Installing cuDNN / cuBLAS runtime for GPU ASR (fixes 'cublas64_12.dll not found')..."
+        & $pythonExe -m pip install nvidia-cudnn-cu12 nvidia-cublas-cu12
+        if ($LASTEXITCODE -ne 0) {
+            Warn "cuDNN/cuBLAS install failed; GPU ASR may not work until you retry."
+        }
+        return "cuda"
+    }
+    Info "No NVIDIA GPU detected (AMD/Intel/none). Installing CPU build of PyTorch..."
+    & $pythonExe -m pip install torch --index-url "https://download.pytorch.org/whl/cpu"
+    return "cpu"
+}
+
 # --- .env helpers -------------------------------------------------------------
 # Read a single BHASHASETU_* key from backend/.env (returns $null if absent).
 function Get-EnvValue([string]$key) {
@@ -471,6 +519,9 @@ if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
 # -- 6. Live mode (optional) ---------------------------------------------------
 if ($liveMode) {
     Step "Installing ML stack (live mode)"
+    # Install torch with the best available build for the detected GPU (or CPU-only if none). Returns "cuda" or "cpu".
+    $torchBuild = Install-Torch $py
+    Info "PyTorch build: $torchBuild"
     & $py -m pip install -r (Join-Path $backend "requirements-ml.txt")
     Step "Downloading open models"
     Info "Models will be stored in $modelsDir"
@@ -485,6 +536,7 @@ Set-EnvValues @{
     "BHASHASETU_BASE_DIR"     = $baseDir
     "BHASHASETU_ENABLE_MODELS" = $enableModels
     "BHASHASETU_OFFLINE"      = "false"
+    "BHASHASETU_DEVICE"        = "auto"
 }
 Info "Wrote settings to $envFile"
 
