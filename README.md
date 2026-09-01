@@ -1,11 +1,9 @@
-<div align="center">
-
 # 🌉 BhashaSetu (भाषासेतु)
 
 ### The Offline Language Bridge for Rural India
 
 **Transcribe → Translate → Voice-over → Subtitle**
-**Marathi • Hindi • English — 100% Open Source, 100% Offline-Capable**
+**Marathi · Hindi · English — 100% Open Source, 100% Offline-Capable**
 
 *Built for BAIF Development Research Foundation*
 
@@ -21,19 +19,19 @@ agricultural demo video**, and instantly receive:
 
 | Output | Description |
 | ------ | ----------- |
-| 📄 **Translated text** | Accurate translation between Marathi, Hindi & English |
+| 📝 **Translated text** | Accurate translation between Marathi, Hindi & English |
 | 🔊 **Translated voice-over** | Natural text-to-speech in the target language |
-| 🎬 **Subtitles** | Time-aligned `.srt` / `.vtt` files **and** burned-in captions |
-| 🗂️ **Reusable library** | Every job is stored, hashed & de-duplicated for instant reuse |
+| 🔠 **Subtitles** | Time-aligned `.srt` / `.vtt` files **and** burned-in captions |
+| ♻️ **Reusable library** | Every job is stored, hashed & de-duplicated for instant reuse |
 
 Everything runs on a **single Windows 11 machine** (Intel i5 / 16 GB RAM / CPU-only) with
 **no cloud, no API keys, no licensing fees**.
 
 ---
 
-## ✨ What makes it unique
+## 🌟 What makes it unique
 
-1. **🌾 Agricultural Domain Glossary** — A curated, editable glossary guarantees that BAIF-specific
+1. **🚜 Agricultural Domain Glossary** — A curated, editable glossary guarantees that BAIF-specific
    terms (crop names, cattle breeds, scheme names, "BAIF" itself) translate **consistently** every
    time. Generic translators get these wrong; BhashaSetu does not.
 2. **♻️ Translation Memory + De-duplication** — Files are SHA-256 hashed. Re-uploading the same
@@ -41,36 +39,39 @@ Everything runs on a **single Windows 11 machine** (Intel i5 / 16 GB RAM / CPU-o
 3. **📦 Single Deployable, Truly Offline** — The FastAPI server serves the UI itself — a polished
    **zero-build** UI by default (no Node toolchain), or the compiled **React** build if you prefer.
    After a one-time model download, **unplug the internet** and it keeps working.
-4. **🧑‍💻 Human-in-the-loop** — Reviewers can correct any translation; corrections feed back into the
+4. **🧑‍🏫 Human-in-the-loop** — Reviewers can correct any translation; corrections feed back into the
    glossary & memory, so the system *improves with use*.
-5. **🌸 Modern, calm, India-first UI** — A unique earthy-tech design built for low-stress field use.
+5. **🪴 Modern, calm, India-first UI** — A unique earthy-tech design built for low-stress field use.
 
 ---
 
 ## 🏗️ Architecture at a glance
 
-                            BhashaSetu (single host)
-                            ------------------------
-  Upload      React UI --HTTP/WS--> FastAPI --> Job Queue (async)
-  text /                                           |
-  audio /                                          ▼
-  video --->                                   Pipeline
-                            1. FFmpeg   (extract audio)
-                            2. Whisper  (speech→text)
-                            3. Glossary (protect terms)
-                            4. IndicTrans2 (translate)
-                            5. MMS/Parler TTS (voice)
-                            6. SRT/VTT + FFmpeg burn-in
-                                       |
-                                       ▼
-                        SQLite + local file library (reuse)
-                        ------------------------
+```
+                          BhashaSetu (single host)
+                         --------------------------
+
+Upload      React UI ──HTTP/WS──> FastAPI ──> Job Queue (async)
+text /                                           │
+audio /                                          ▼
+video ───┐                                 Pipeline
+         │                         ┌───────────────────────────┐
+         │                         │ 1. FFmpeg   (extract audio)│
+         │                         │ 2. Whisper  (speech→text)  │
+         │                         │ 3. Glossary (protect terms)│
+         │                         │ 4. IndicTrans2 (translate) │
+         │                         │ 5. MMS/Parler TTS (voice)  │
+         │                         │ 6. SRT/VTT + FFmpeg burn-in│
+         │                         └───────────────────────────┘
+         │                                       ▼
+         └───────────────────────> SQLite + local file library (reuse)
+```
 
 Full details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ---
 
-## 📚 Open-Source Model Stack (all free, all offline)
+## 📦 Open-Source Model Stack (all free, all offline)
 
 | Stage | Model | License | Why |
 | ----- | ----- | ------- | --- |
@@ -79,7 +80,7 @@ Full details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 | Text-to-Speech | **MMS-TTS** (default) / **Indic Parler-TTS** (HQ) | CC-BY-NC / Apache-2.0 | Lightweight CPU voices for mr/hi/en |
 | Media | **FFmpeg** | LGPL | Industry standard audio/video processing |
 
-> Models are **pluggable** behind clean interfaces — swap in NLLB-200 or any HF model via config.
+> Models are **pluggable** behind clean interfaces - swap in NLLB-200 or any HF model via config.
 > See [docs/MODELS.md](docs/MODELS.md) for the licensing rationale and alternatives.
 
 ---
@@ -88,8 +89,10 @@ Full details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ### Windows 11 (one command)
 
+```powershell
 # From the project root, in PowerShell
 ./scripts/install.ps1
+```
 
 This checks prerequisites, creates the virtual environment, installs dependencies,
 and starts the app automatically by default.
@@ -107,12 +110,14 @@ Common options:
 Manual setup commands are intentionally moved to advanced guidance:
 [docs/INSTALLATION.md](docs/INSTALLATION.md)
 
-### 📦 Prefer a double-click app? Build a Windows `.exe`
+### 🪟 Prefer a double-click app? Build a Windows `.exe`
 
 No Python needed on the target machine — package BhashaSetu into a self-contained Windows app:
 
-# from the project root — builds the portable .exe AND the installer-ready app folder
+```powershell
+# From the project root - builds the portable .exe AND the installer-ready app folder
 ./scripts/build_exe.ps1 -Both
+```
 
 Double-click `dist\BhashaSetu.exe`: a small control window opens, the local server starts, and your
 browser opens to the UI automatically. You can also build a friendly `setup.exe` (Inno Setup) and
@@ -125,25 +130,25 @@ Full setup (incl. FFmpeg & GPU notes): [docs/INSTALLATION.md](docs/INSTALLATION.
 
 ## 📁 Repository layout
 
----
-
+```
 baif_hackathon/
-├── backend/              FastAPI app + ML pipeline services
-│   ├── launcher.py       desktop entry point for the packaged Windows .exe
+├── backend/            FastAPI app + ML pipeline services
+│   ├── launcher.py     desktop entry point for the packaged Windows .exe
 │   └── app/
-│       ├── services/     asr · translate · tts · media · subtitles · glossary · storage · pipeline
-│       ├── api/          REST + WebSocket routes
-│       ├── data/         glossary seed, SQLite db, media library
-│       └── static/       compiled React UI (created by `npm run build`)
-├── frontend/             React + Vite + Tailwind UI (required runtime UI)
-├── installer/            PyInstaller spec + Inno Setup script for the Windows .exe
-├── presentation/         self-contained slide decks (index.html · technical.html)
-├── scripts/              install.ps1 · download_models.py · build_exe.ps1
-└── docs/                 ARCHITECTURE · INSTALLATION · MODELS
+│       ├── services/   asr · translate · tts · media · subtitles · glossary · storage · pipeline
+│       ├── api/        REST + WebSocket routes
+│       ├── data/       glossary seed, SQLite db, media library
+│       └── static/     compiled React UI (created by `npm run build`)
+├── frontend/           React + Vite + Tailwind UI (required runtime UI)
+├── installer/          PyInstaller spec + Inno Setup script for the Windows .exe
+├── presentation/       self-contained slide decks (index.html ; technical.html)
+├── scripts/            install.ps1 · download_models.py · build_exe.ps1
+└── docs/               ARCHITECTURE · INSTALLATION · MODELS
+```
 
 ---
 
-## 🎥 Presentation
+## 👩🏽‍💻 Presentation
 
 Three self-contained slide decks ship in [presentation/](presentation/) — no internet or dependencies:
 
