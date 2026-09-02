@@ -5,39 +5,31 @@ Takes a persisted Job, runs the appropriate stages (media -> ASR -> glossary ->
 translation -> TTS -> subtitles -> burn-in) and records progress + results in the DB.
 
 The pipeline is deliberately synchronous and self-contained; it is executed on a
-background worker thread (see ``jobs.py``). For multi-node scale-out the same
+background worker thread (see `jobs.py`). For multi-node scale-out the same
 function can be driven by a Celery task without modification.
 """
 from __future__ import annotations
 
 import logging
-import re
 
 from app.config import settings
 from app.db.database import session_scope
 from app.db.models import Job
-from app.languages import get_language
+from app import languages
 from app.services import asr, cancellation, glossary, media, storage, subtitles, tts
 from app.services.translate import translate_segments, translate_text
 
 logger = logging.getLogger(__name__)
 
-_DEVANAGARI = re.compile(r"[\u0900-\u097F]+")
-# Markers that strongly indicate Marathi over Hindi.
-_MARATHI_MARKERS = ("ळ", "आहे", "नाही", "मला", "तुम्ही", "आम्ही", "होते", "करा")
-
 
 def detect_text_language(text: str) -> str:
-    """Lightweight script/keyword heuristic for text input (en / hi / mr)."""
-    if not text:
-        return "en"
-    deva = len(_DEVANAGARI.findall(text))
-    latin = len(re.findall(r"[A-Za-z]", text))
-    if deva == 0 or latin > deva:
-        return "en"
-    if any(marker in text for marker in _MARATHI_MARKERS):
-        return "mr"
-    return "hi"
+    """Registry-driven script/keyword auto-detection for text input.
+
+    Delegates to :func:`app.languages.detect_language`, which recognises any
+    language registered in ``LANGUAGES`` by its Unicode script (with marker-based
+    disambiguation for languages that share a script, e.g. Hindi vs Marathi).
+    """
+    return languages.detect_language(text)
 
 
 class DurationLimitError(RuntimeError):
@@ -106,6 +98,9 @@ def _translate_segments_with_glossary(texts: list[str], src: str, tgt: str) -> l
     translated = translate_segments(masked, src, tgt)
     return [glossary.restore_text(tr, mp, tgt) for tr, mp in zip(translated, mappings)]
 
+def _join_segments(texts: list[str]) -> str:
+    """Join a list of segments into a single string, with spacing."""
+    return " ".join((t or "").strip() for t in texts if (t or "").strip()).strip()
 
 # --- Main entry point -------------------------------------------------------
 def process_job(job_id: str) -> None:
@@ -132,7 +127,6 @@ def _safe_error(exc: Exception) -> str:
     if isinstance(exc, media.MediaError):
         return "Media processing failed. Please check the file is valid and try again."
     return "Processing failed due to an internal error. Please try again."
-
 
 def _run(job_id: str) -> None:
     with session_scope() as session:
@@ -184,6 +178,16 @@ def _run(job_id: str) -> None:
         source_text = result.text
         segments_src = [{"start": s.start, "end": s.end, "text": s.text} for s in result.segments]
         duration = result.duration
+        # Whisper frequently confuses languages that share a script (e.g. Marathi
+        # and Hindi, both Devanagari). When the source was auto-detected and its
+        # script is shared by more than one supported language, re-check the
+        # transcript with our marker heuristic and prefer its verdict, which is
+        # far more reliable for such same-script pairs.
+        if snapshot["source_lang"] in ("auto", "", None) and languages.shares_script(src):
+            heuristic = detect_text_language(source_text)
+            if languages.get_language(heuristic).script == languages.get_language(src).script:
+                src = heuristic
+
         _update(
             job_id, stage="translating", progress=55,
             detected_lang=src, source_text=source_text,
@@ -192,18 +196,28 @@ def _run(job_id: str) -> None:
 
     # --- 2. Translate -------------------------------------------------------
     _check_cancel(job_id)
+    same_language_notice: str | None = None
     if src == target:
+        same_language_notice = (
+            "Source and target language are the same, so the text was left unchanged."
+        )
         translated_text = source_text
         translated_segments = [s["text"] for s in segments_src]
     else:
-        translated_text = _translate_with_glossary(source_text, src, target)
-        seg_texts = [s["text"] for s in segments_src]
-        translated_segments = _translate_segments_with_glossary(seg_texts, src, target)
+        # translation quality, while media jobs translate timed segment once
+        if snapshot["input_type"] == "text":
+            translated_text = _translate_with_glossary(source_text, src, target)
+            translated_segments = [translated_text]
+        else:     
+            seg_texts = [s["text"] for s in segments_src]
+            translated_segments = _translate_segments_with_glossary(seg_texts, src, target)
+            translated_text = _join_segments(translated_segments)
 
     timed_segments = [
         {"start": s["start"], "end": s["end"], "source": s["text"], "translated": tr}
         for s, tr in zip(segments_src, translated_segments)
     ]
+
     _update(job_id, stage="translated", progress=65, translated_text=translated_text, segments=timed_segments)
 
     srt_rel = vtt_rel = audio_rel = video_rel = None
@@ -235,6 +249,7 @@ def _run(job_id: str) -> None:
                 {"start": start, "end": end, "text": s["translated"]}
                 for s, (start, end) in zip(timed_segments, spans)
             ]
+
         srt_out = out_dir / "subtitles.srt"
         vtt_out = out_dir / "subtitles.vtt"
         subtitles.write_subtitles(sub_segments, srt_out, vtt_out)
@@ -264,12 +279,13 @@ def _run(job_id: str) -> None:
                     base_video = dubbed_out
                     video_rel = storage.rel_to_data(dubbed_out)
 
-                # 5b. Burn captions onto the (possibly dubbed) video.
+                # 5b. Burn captions onto (the possibly dubbed) video.
                 if snapshot["burn_subtitles"] and srt_out is not None:
                     _update(job_id, stage="burning-captions", progress=94)
                     video_out = out_dir / "captioned.mp4"
                     media.burn_subtitles(base_video, srt_out, video_out)
                     video_rel = storage.rel_to_data(video_out)
+
             except media.MediaError as exc:
                 logger.warning("Video render failed for %s: %s", job_id, exc)
                 # If nothing usable came out of the pipeline at all, fail the job
@@ -288,7 +304,7 @@ def _run(job_id: str) -> None:
         stage="done",
         progress=100,
         source_lang=src,
-        error=render_warning,
+        error=render_warning or same_language_notice,
         srt_path=srt_rel,
         vtt_path=vtt_rel,
         audio_path=audio_rel,

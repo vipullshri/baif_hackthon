@@ -62,6 +62,15 @@ class Settings(BaseSettings):
 
     # --- Models -------------------------------------------------------------
     whisper_model: str = "small"
+    #Asr quality/performance knobs. keep base size=5 for quality parity
+    asr_beam_size: int = 5
+    asr_vad_filter: bool = True
+    #cpu threads used by ctranslate2 (0=runtime default/auto)
+    asr_cpu_threads: int = 0
+    #Decoder workers (1=single-threaded, 2=double throughput, 3+=more throughput but more memory)
+    asr_num_workers: int = 1
+    #Asr preloading (True=load on startup, False=load on first request)    
+    asr_preload: bool = True
     mt_backend: str = "indictrans2"  # indictrans2 | nllb
     indictrans_en_indic: str = "ai4bharat/indictrans2-en-indic-dist-200M"
     indictrans_indic_en: str = "ai4bharat/indictrans2-indic-en-dist-200M"
@@ -69,6 +78,7 @@ class Settings(BaseSettings):
     nllb_model: str = "facebook/nllb-200-distilled-600M"
     tts_backend: str = "mms"         # mms | parler
     mt_batch_size: int = 8           # sentences translated per model.generate() call
+    mt_num_beams: int = 2                 # lower for speed, higher for quality (beam search)
 
     # --- Hugging Face auth (needed for gated repos like IndicTrans2) --------
     hf_token: str = ""               # set via BHASHASETU_HF_TOKEN or HF_TOKEN

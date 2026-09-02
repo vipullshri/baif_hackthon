@@ -1,33 +1,50 @@
 import { motion } from 'framer-motion'
 import { Check, Loader2, Mic, Languages, Volume2, Captions, Film, Sparkles, X } from 'lucide-react'
 
-// Pipeline stages with the progress value at which each becomes "done".
+// Ordered pipeline stages. Each maps to the backend `stage` strings it covers.
+// `needs` decides whether the step is shown for the current mode + chosen options.
 const STAGES = [
-  { key: 'transcribe', label: 'Transcribe speech', icon: Mic, at: 55, stages: ['extracting-audio', 'transcribing'] },
-  { key: 'translate', label: 'Translate + glossary', icon: Languages, at: 65, stages: ['translating', 'translated'] },
-  { key: 'voice', label: 'Generate voice-over', icon: Volume2, at: 80, stages: ['synthesizing-voice'] },
-  { key: 'subs', label: 'Build subtitles', icon: Captions, at: 90, stages: ['building-subtitles'] },
-  { key: 'captions', label: 'Burn captions', icon: Film, at: 95, stages: ['burning-captions'] },
+  { key: 'transcribe', label: 'Transcribe speech', icon: Mic,
+    match: ['starting', 'extracting-audio', 'transcribing'], needs: (t) => t !== 'text' },
+  { key: 'translate', label: 'Translate + glossary', icon: Languages,
+    match: ['translating', 'translated'], needs: () => true },
+  { key: 'voice', label: 'Generate voice-over', icon: Volume2,
+    match: ['synthesizing-voice'], needs: (t, o) => o.tts },
+  { key: 'subs', label: 'Build subtitles', icon: Captions,
+    match: ['building-subtitles'], needs: (t, o) => t !== 'text' && o.subs },
+  { key: 'dub', label: 'Dub video', icon: Film,
+    match: ['dubbing-video'], needs: (t, o) => t === 'video' && o.tts },
+  { key: 'captions', label: 'Burn captions', icon: Film,
+    match: ['burning-captions'], needs: (t, o) => t === 'video' && o.burn },
 ]
 
-export function ProgressTracker({ job, inputType, onCancel }) {
+// Flat order of backend stage strings, used to decide done/active/pending.
+const STAGE_ORDER = [
+  'starting', 'extracting-audio', 'transcribing', 'translating', 'translated',
+  'synthesizing-voice', 'building-subtitles', 'dubbing-video', 'burning-captions', 'done',
+]
+
+export function ProgressTracker({ job, inputType, opts = { tts: true, subs: true, burn: false }, onCancel }) {
   const progress = job?.progress ?? 0
-  const isText = inputType === 'text'
-  const cancelling = job?.stage === 'cancelling'
-  const visible = STAGES.filter((s) => {
-    if (isText && (s.key === 'transcribe' || s.key === 'subs' || s.key === 'captions')) return false
-    if (inputType === 'audio' && s.key === 'captions') return false
-    return true
-  })
+  const stage = job?.stage
+  const completed = job?.status === 'completed'
+  const failed = job?.status === 'failed'
+  const cancelling = stage === 'cancelling'
+  const currentIdx = STAGE_ORDER.indexOf(stage)
+
+  const visible = STAGES.filter((s) => s.needs(inputType, opts))
+  const activeStep = visible.find((s) => s.match.includes(stage))
+  const currentLabel = completed ? 'Translation complete'
+    : cancelling ? 'Cancelling…'
+    : activeStep ? `${activeStep.label}…`
+    : 'Working on your translation…'
 
   return (
     <div className="card p-6 animate-fadeUp">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2 font-semibold">
           <Sparkles className="w-5 h-5 text-saffron-300" />
-          {job?.status === 'completed' ? 'Translation complete'
-            : cancelling ? 'Cancelling…'
-            : 'Working on your translation…'}
+          {currentLabel}
         </div>
         <div className="flex items-center gap-3">
           <span className="text-sm tabular-nums text-sand-300/70">{progress}%</span>
@@ -56,8 +73,10 @@ export function ProgressTracker({ job, inputType, onCancel }) {
 
       <div className="mt-5 grid gap-2.5">
         {visible.map((s) => {
-          const done = progress >= s.at && job?.status !== 'failed'
-          const active = !done && (s.stages.includes(job?.stage) || progress >= s.at - 10) && job?.status === 'processing'
+          // A step's position is the earliest backend stage it covers.
+          const stepIdx = Math.min(...s.match.map((m) => STAGE_ORDER.indexOf(m)))
+          const done = completed || (currentIdx >= 0 && currentIdx > stepIdx)
+          const active = !done && !failed && s.match.includes(stage)
           const Icon = s.icon
           return (
             <div key={s.key} className="flex items-center gap-3">

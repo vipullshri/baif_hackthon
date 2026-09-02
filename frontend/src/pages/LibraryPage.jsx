@@ -1,26 +1,25 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Type, FileAudio, FileVideo, Trash2, RefreshCw, Library, X, Search, Clock,
+  Type, FileAudio, FileVideo, Trash2, RefreshCw, Library, Search, Clock,
 } from 'lucide-react'
 import { api } from '../api/client'
-import { ResultPanel } from '../components/ResultPanel'
-import { Chip, EmptyState, LangBadge, Spinner } from '../components/ui'
+import { Chip, EmptyState, LangBadge, Spinner, StatusChip } from '../components/ui'
 
 const ICONS = { text: Type, audio: FileAudio, video: FileVideo }
 
 function timeAgo(iso) {
   const d = new Date(iso)
   const diff = (Date.now() - d.getTime()) / 1000
-  if (diff < 60) return `just now`
+  if (diff < 60) return 'just now'
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
   return d.toLocaleDateString()
 }
 
-export function LibraryPage({ refreshKey }) {
+export function LibraryPage({ refreshKey, onOpenResult }) {
   const [jobs, setJobs] = useState(null)
-  const [selected, setSelected] = useState(null)
   const [query, setQuery] = useState('')
+  const [confirmId, setConfirmId] = useState(null)
 
   const load = useCallback(async () => {
     try {
@@ -33,16 +32,15 @@ export function LibraryPage({ refreshKey }) {
 
   useEffect(() => { load() }, [load, refreshKey])
 
-  const remove = async (e, id) => {
-    e.stopPropagation()
-    await api.deleteJob(id)
-    setJobs((prev) => prev?.filter((j) => j.id !== id))
-  }
-
-  const open = async (job) => {
-    if (job.status !== 'completed') return
-    const full = await api.getJob(job.id)
-    setSelected(full)
+  const remove = async (id) => {
+    setConfirmId(null)
+    const prev = jobs
+    setJobs((list) => list?.filter((j) => j.id !== id)) // optimistic
+    try {
+      await api.deleteJob(id)
+    } catch {
+      setJobs(prev) // rollback on failure
+    }
   }
 
   const filtered = jobs?.filter((j) =>
@@ -61,7 +59,7 @@ export function LibraryPage({ refreshKey }) {
           <input value={query} onChange={(e) => setQuery(e.target.value)}
                  placeholder="Search library…" className="input pl-10" />
         </div>
-        <button onClick={load} className="btn-ghost"><RefreshCw className="w-4 h-4" /> Refresh</button>
+        <button type="button" onClick={load} className="btn-ghost"><RefreshCw className="w-4 h-4" /> Refresh</button>
         <span className="ml-auto text-sm text-sand-300/60">{filtered.length} item(s)</span>
       </div>
 
@@ -73,61 +71,52 @@ export function LibraryPage({ refreshKey }) {
           {filtered.map((job) => {
             const Icon = ICONS[job.input_type] || Type
             return (
-              <button key={job.id} onClick={() => open(job)}
-                      className="card p-5 text-left hover:-translate-y-1 hover:shadow-glow transition-all group">
-                <div className="flex items-start gap-3">
-                  <span className="grid place-items-center w-11 h-11 rounded-xl bg-leaf-500/15 border border-leaf-500/25 shrink-0">
-                    <Icon className="w-5 h-5 text-leaf-300" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="font-semibold truncate">{job.title || 'Untitled'}</div>
-                    <div className="flex items-center gap-1.5 mt-0.5 text-xs text-sand-300/50">
-                      <Clock className="w-3 h-3" /> {timeAgo(job.created_at)}
+              <div key={job.id} className="card p-5 flex flex-col hover:-translate-y-1 hover:shadow-glow transition-all">
+                <button type="button" onClick={() => onOpenResult?.(job.id)} className="text-left">
+                  <div className="flex items-start gap-3">
+                    <span className="grid place-items-center w-11 h-11 rounded-xl bg-leaf-500/15 border border-leaf-500/25 shrink-0">
+                      <Icon className="w-5 h-5 text-leaf-300" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold truncate">{job.title || 'Untitled'}</div>
+                      <div className="flex items-center gap-1.5 mt-0.5 text-xs text-sand-300/50">
+                        <Clock className="w-3 h-3" /> {timeAgo(job.created_at)}
+                      </div>
                     </div>
                   </div>
-                  <span onClick={(e) => remove(e, job.id)}
-                        className="opacity-0 group-hover:opacity-100 transition p-1.5 rounded-lg hover:bg-red-500/20 text-red-300">
-                    <Trash2 className="w-4 h-4" />
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2 mt-4">
+                    <LangBadge code={job.detected_lang || job.source_lang} />
+                    <span className="text-sand-400/40">→</span>
+                    <LangBadge code={job.target_lang} />
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-3">
+                    <StatusChip status={job.status} />
+                    {job.reused && <Chip tone="saffron"><RefreshCw className="w-3 h-3" /> Reused</Chip>}
+                    {job.mock && <Chip>Demo</Chip>}
+                  </div>
+                </button>
+
+                <div className="mt-4 pt-3 border-t border-white/10 flex justify-end">
+                  {confirmId === job.id ? (
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-sand-300/70">Delete this translation?</span>
+                      <button type="button" onClick={() => remove(job.id)}
+                              className="btn-ghost !py-1 !px-2 text-red-300 hover:bg-red-500/20">Confirm</button>
+                      <button type="button" onClick={() => setConfirmId(null)}
+                              className="btn-ghost !py-1 !px-2">Cancel</button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => setConfirmId(job.id)}
+                            className="btn-ghost !py-1.5 !px-2.5 text-xs text-red-300 hover:bg-red-500/15">
+                      <Trash2 className="w-4 h-4" /> Delete
+                    </button>
+                  )}
                 </div>
-                <div className="flex flex-wrap items-center gap-2 mt-4">
-                  <LangBadge code={job.detected_lang || job.source_lang} />
-                  <span className="text-sand-400/40">→</span>
-                  <LangBadge code={job.target_lang} />
-                </div>
-                <div className="flex flex-wrap gap-1.5 mt-3">
-                  <StatusChip status={job.status} />
-                  {job.reused && <Chip tone="saffron"><RefreshCw className="w-3 h-3" /> Reused</Chip>}
-                  {job.mock && <Chip>Demo</Chip>}
-                </div>
-              </button>
+              </div>
             )
           })}
         </div>
       )}
-
-      {selected && (
-        <div className="fixed inset-0 z-50 grid place-items-center p-4 bg-black/70 backdrop-blur-sm"
-             onClick={() => setSelected(null)}>
-          <div className="w-full max-w-3xl max-h-[88vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-end mb-2">
-              <button onClick={() => setSelected(null)} className="btn-ghost !p-2.5"><X className="w-5 h-5" /></button>
-            </div>
-            <ResultPanel job={selected} />
-          </div>
-        </div>
-      )}
     </div>
   )
-}
-
-function StatusChip({ status }) {
-  const map = {
-    completed: ['leaf', 'Completed'],
-    processing: ['saffron', 'Processing'],
-    pending: ['saffron', 'Queued'],
-    failed: ['danger', 'Failed'],
-  }
-  const [tone, label] = map[status] || ['default', status]
-  return <Chip tone={tone}>{label}</Chip>
 }

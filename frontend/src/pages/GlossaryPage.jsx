@@ -3,11 +3,23 @@ import { BookMarked, Plus, Trash2, Search, Sprout } from 'lucide-react'
 import { api } from '../api/client'
 import { EmptyState, Spinner } from '../components/ui'
 
-const BLANK = { category: 'general', en: '', hi: '', mr: '', note: '' }
+// Fallback used only if the languages list hasn't loaded yet.
+const FALLBACK_LANGS = [
+  { code: 'en', name: 'English', native: 'English' },
+  { code: 'hi', name: 'Hindi', native: 'हिंदी' },
+  { code: 'mr', name: 'Marathi', native: 'मराठी' },
+]
 
-export function GlossaryPage() {
+export function GlossaryPage({ languages }) {
+  const langs = languages && languages.length ? languages : FALLBACK_LANGS
+  const blankForms = useMemo(
+    () => Object.fromEntries(langs.map((l) => [l.code, ''])),
+    [langs],
+  )
+  const makeBlank = () => ({ category: 'general', note: '', forms: { ...blankForms } })
+
   const [entries, setEntries] = useState(null)
-  const [form, setForm] = useState(BLANK)
+  const [form, setForm] = useState(makeBlank)
   const [saving, setSaving] = useState(false)
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
@@ -17,17 +29,21 @@ export function GlossaryPage() {
   }
   useEffect(() => { load() }, [])
 
+  const setFormLang = (code, value) =>
+    setForm((f) => ({ ...f, forms: { ...f.forms, [code]: value } }))
+
   const add = async (e) => {
     e.preventDefault()
-    if (!form.en || !form.hi || !form.mr) {
-      setError('English, Hindi and Marathi forms are all required.')
+    const filled = Object.values(form.forms).filter((v) => v && v.trim()).length
+    if (filled === 0) {
+      setError('Enter the term in at least one language.')
       return
     }
     setSaving(true)
     setError('')
     try {
-      await api.addGlossary(form)
-      setForm(BLANK)
+      await api.addGlossary({ category: form.category, note: form.note, forms: form.forms })
+      setForm(makeBlank())
       await load()
     } catch (err) {
       setError(err.message)
@@ -44,13 +60,21 @@ export function GlossaryPage() {
   const grouped = useMemo(() => {
     if (!entries) return {}
     const q = query.toLowerCase()
-    const filtered = entries.filter((e) =>
-      !q || [e.en, e.hi, e.mr, e.category].some((v) => v?.toLowerCase().includes(q)))
+    const filtered = entries.filter((e) => {
+      if (!q) return true
+      const values = [...Object.values(e.forms || {}), e.category]
+      return values.some((v) => v?.toLowerCase().includes(q))
+    })
+
     return filtered.reduce((acc, e) => {
       (acc[e.category] ||= []).push(e)
       return acc
     }, {})
   }, [entries, query])
+
+  // Dynamic grid: one column per language + a trailing delete-button column.
+  const gridCols = { gridTemplateColumns: `repeat(${langs.length}, 1fr) 36px` }
+  const isDeva = (code) => code !== 'en'
 
   return (
     <div className="grid lg:grid-cols-[1fr_360px] gap-6 items-start">
@@ -79,14 +103,19 @@ export function GlossaryPage() {
                   <span className="text-xs text-sand-400/50">({items.length})</span>
                 </div>
                 <div className="card overflow-hidden divide-y divide-white/5">
-                  <div className="grid grid-cols-[1fr_1fr_1fr_36px] gap-3 px-4 py-2.5 text-xs label bg-white/[0.02]">
-                    <span>English</span><span>हिन्दी</span><span>मराठी</span><span></span>
+                  <div style={gridCols} className="grid gap-3 px-4 py-2.5 text-xs label bg-white/[0.02]">
+                    {langs.map((l) => <span key={l.code}>{l.native}</span>)}
+                    <span></span>
                   </div>
                   {items.map((e) => (
-                    <div key={e.id} className="grid grid-cols-[1fr_1fr_1fr_36px] gap-3 px-4 py-3 items-center hover:bg-white/[0.03] group">
-                      <span className="text-sand-100">{e.en}</span>
-                      <span className="font-deva text-sand-100">{e.hi}</span>
-                      <span className="font-deva text-sand-100">{e.mr}</span>
+                    <div key={e.id} style={gridCols}
+                         className="grid gap-3 px-4 py-3 items-center hover:bg-white/[0.03] group">
+                      {langs.map((l) => (
+                        <span key={l.code}
+                              className={`text-sand-100 ${isDeva(l.code) ? 'font-deva' : ''}`}>
+                          {e.forms?.[l.code] || '---'}
+                        </span>
+                      ))}
                       <button onClick={() => remove(e.id)}
                               className="opacity-0 group-hover:opacity-100 transition p-1.5 rounded-lg hover:bg-red-500/20 text-red-300">
                         <Trash2 className="w-4 h-4" />
@@ -114,24 +143,18 @@ export function GlossaryPage() {
           <input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}
                  className="input mt-1" placeholder="e.g. livestock" />
         </div>
-        <div>
-          <span className="label">English</span>
-          <input value={form.en} onChange={(e) => setForm({ ...form, en: e.target.value })}
-                 className="input mt-1" placeholder="crossbred cow" />
-        </div>
-        <div>
-          <span className="label">हिन्दी (Hindi)</span>
-          <input value={form.hi} onChange={(e) => setForm({ ...form, hi: e.target.value })}
-                 className="input mt-1 font-deva" placeholder="संकर गाय" />
-        </div>
-        <div>
-          <span className="label">मराठी (Marathi)</span>
-          <input value={form.mr} onChange={(e) => setForm({ ...form, mr: e.target.value })}
-                 className="input mt-1 font-deva" placeholder="संकरित गाय" />
-        </div>
+        {langs.map((l) => (
+          <div key={l.code}>
+            <span className="label">{l.native} ({l.name})</span>
+            <input value={form.forms[l.code] ?? ''}
+                   onChange={(e) => setFormLang(l.code, e.target.value)}
+                   className={`input mt-1 ${isDeva(l.code) ? 'font-deva' : ''}`}
+                   placeholder={l.name} />
+          </div>
+        ))}
         {error && <p className="text-sm text-red-300">{error}</p>}
         <button disabled={saving} className="btn-accent w-full">
-          {saving ? <Spinner /> : <><Plus className="w-5 h-5" /> Add term</>}
+          {saving ? <Spinner /> : <Plus className="w-5 h-5" />} Add term
         </button>
       </form>
     </div>

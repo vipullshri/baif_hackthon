@@ -3,26 +3,36 @@
     BhashaSetu setup script for Windows.
 
 .DESCRIPTION
-    Creates the Python virtual environment, installs dependencies and prints the
-    command to start the app. By default it sets up DEMO mode (no heavy ML models),
-    which runs the whole workflow instantly with realistic mock output.
+    Creates the Python virtual environment, installs dependencies and starts
+    BhashaSetu for local use.
+
+    Run with NO arguments for the interactive menu: it detects whether an install
+    already exists and offers Start / Reinstall (Demo or Live) for an existing setup,
+    or Demo/Live install choices for a first-time setup. Passing any flag below skips
+    the menu (useful for automation) and applies that flag directly.
 
 .PARAMETER Live
     Also install the ML stack (requirements-ml.txt) and pre-download the open models
     for production-quality output.
 
 .PARAMETER BuildFrontend
-    Build the React/Vite/Tailwind UI (requires Node.js + internet). Optional - a
-    polished, zero-build UI ships ready to run.
+    Build the React/Vite/Tailwind UI (requires Node.js + internet).
+    The new UI build is mandatory for runtime.
 
-.PARAMETER Run
-    Start the server automatically when setup finishes and open the browser.
+.PARAMETER NoRun
+    Do not auto-start the app after setup.
+
+.PARAMETER Reinstall
+    Rebuild installation in the selected base directory.
+
+.PARAMETER Force
+    Alias for -Reinstall.
 
 .EXAMPLE
-    ./scripts/install.ps1
-    ./scripts/install.ps1 -Live
-    ./scripts/install.ps1 -BuildFrontend
-    ./scripts/install.ps1 -Live -Run
+    .\scripts\install.ps1             # interactive menu (recommended)
+    .\scripts\install.ps1 -Live       # non-interactive Live install
+    .\scripts\install.ps1 -Live -NoRun
+    .\scripts\install.ps1 -Reinstall
 
 .NOTES
     If script execution is blocked, run once with:
@@ -32,7 +42,9 @@
 param(
     [switch]$Live,
     [switch]$BuildFrontend,
+    [switch]$NoRun,
     [switch]$Run,
+    [Alias("Force")]
     [switch]$Reinstall
 )
 
@@ -41,14 +53,107 @@ $root = Split-Path -Parent $PSScriptRoot
 $backend = Join-Path $root "backend"
 $frontend = Join-Path $root "frontend"
 $envFile = Join-Path $backend ".env"
+$defaultTargetRoot = $root
+$effectiveRun = -not $NoRun
+# Resolved runtime choices. These start from the flags but can be overridden by the
+# interactive menu below when the script is launched with no arguments.
+$liveMode = [bool]$Live
+$reinstallMode = [bool]$Reinstall
+$noFlagsPassed = ($PSBoundParameters.Count -eq 0)
+$targetDirOverride = $null
 
-# --- .env helpers ---------------------------------------------------------------
+if ($Run) {
+    Write-Host "  Note: -Run is now default behavior. Use -NoRun to skip auto-start." -ForegroundColor Gray
+}
+
+function Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Green }
+function Info($msg) { Write-Host "  $msg" -ForegroundColor Gray }
+function Warn($msg) { Write-Host "  ! $msg" -ForegroundColor Yellow }
+
+function Start-BhashaSetu([string]$pythonExe) {
+    Push-Location $backend
+    try {
+        Start-Process "http://127.0.0.1:8000"
+        & $pythonExe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+    } finally {
+        Pop-Location
+    }
+}
+
+function Test-CommandHealthy([string]$command, [string[]]$commandArgs) {
+    if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+    & $command @commandArgs | Out-Null
+    return ($LASTEXITCODE -eq 0)
+}
+
+function Test-WebReachable([string]$hostName) {
+    # Fast single TCP probe to :443 instead of a full HTTP GET (the old 12s-per-call
+    # Invoke-WebRequest checks were the slow step). Test-NetConnection is a cmdlet, so it
+    # stays safe under PowerShell Constrained Language Mode on this machine.
+    try {
+        return (Test-NetConnection -ComputerName $hostName -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue)
+    } catch {
+        return $false
+    }
+}
+
+
+# -- GPU auto-detection --------------------------------------------------------
+# Detects an NVIDIA GPU via nvidia-smi and returns the matching PyTorch CUDA wheel tag
+# (e.g. "cu121"), or $null when no usable NVIDIA GPU/driver is found. CUDA is
+# NVIDIA-only, so AMD / Intel / Apple GPUs (and no-GPU boxes) correctly get $null -> CPU.
+function Get-TorchCudaTag {
+    if (-not (Get-Command nvidia-smi -ErrorAction SilentlyContinue)) { return $null }
+    try {
+        $out = & nvidia-smi 2>$null
+    } catch {
+        return $null
+    }
+    if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
+    # nvidia-smi's header prints the max supported toolkit, e.g. "CUDA Version: 12.4".
+    $m = ($out | Select-String -Pattern 'CUDA Version:\s*([0-9]+)\.([0-9]+)' | Select-Object -First 1)
+    if (-not $m) { return "cu121" } # GPU present but version unparsed: safe default.
+    $major = [int]$m.Matches[0].Groups[1].Value
+    $minor = [int]$m.Matches[0].Groups[2].Value
+    if ($major -gt 12 -or ($major -eq 12 -and $minor -ge 4)) { return "cu124" }
+    if ($major -eq 12) { return "cu121" }
+    return $null # CUDA 11.x or older driver: fall back to CPU to avoid a bad combo.
+}
+
+# Installs torch with the correct build: the CUDA wheel + cuDNN/cuBLAS runtime (needed by
+# faster-whisper's CTranslate2 for GPU ASR) when an NVIDIA GPU is present, otherwise the
+# CPU-only wheel. Returns "cuda" or "cpu" so the caller can persist BHASHASETU_DEVICE.
+function Install-Torch([string]$pythonExe) {
+    $cudaTag = Get-TorchCudaTag
+    if ($cudaTag) {
+        Info "NVIDIA GPU detected. Installing CUDA build of PyTorch ($cudaTag)..."
+        & $pythonExe -m pip install torch --index-url "https://download.pytorch.org/whl/$cudaTag"
+        if ($LASTEXITCODE -ne 0) {
+            Warn "CUDA torch install failed; falling back to the CPU build."
+            & $pythonExe -m pip install torch --index-url "https://download.pytorch.org/whl/cpu"
+            return "cpu"
+        }
+        Info "Installing cuDNN / cuBLAS runtime for GPU ASR (fixes 'cublas64_12.dll not found')..."
+        & $pythonExe -m pip install nvidia-cudnn-cu12 nvidia-cublas-cu12
+        if ($LASTEXITCODE -ne 0) {
+            Warn "cuDNN/cuBLAS install failed; GPU ASR may not work until you retry."
+        }
+        return "cuda"
+    }
+    Info "No NVIDIA GPU detected (AMD/Intel/none). Installing CPU build of PyTorch..."
+    & $pythonExe -m pip install torch --index-url "https://download.pytorch.org/whl/cpu"
+    return "cpu"
+}
+
+# --- .env helpers -------------------------------------------------------------
 # Read a single BHASHASETU_* key from backend/.env (returns $null if absent).
 function Get-EnvValue([string]$key) {
     if (-not (Test-Path $envFile)) { return $null }
     foreach ($line in Get-Content $envFile) {
         if ($line -match "^\s*$key\s*=\s*(.*)$") {
-            return $matches[1].Trim().Trim("'")
+            return $matches[1].Trim().Trim('"')
         }
     }
     return $null
@@ -70,45 +175,134 @@ function Set-EnvValues([hashtable]$values) {
         }
         if (-not $replaced) { $lines += $entry }
     }
-    # config.py reads .env as utf-8-sig, so a BOM here is harmless.
+    # Config.py reads .env as utf-8-sig, so a BOM here is harmless.
     Set-Content -Path $envFile -Value $lines -Encoding UTF8
 }
 
-# --- Rerun detection ------------------------------------------------------------
-# If a previous install recorded a base dir whose venv still exists, skip setup
-# and just start the API (unless -Reinstall forces a fresh setup).
-if (-not $Reinstall) {
+# --- Existing-install detection -----------------------------------------------
+# An install counts as "existing" when its virtual environment is healthy. The React
+# build is tracked separately: a missing UI is repaired (rebuilt) rather than forcing a
+# full fresh setup.
+function Get-ExistingInstallPython {
     $savedBase = Get-EnvValue "BHASHASETU_BASE_DIR"
-    if ($savedBase) {
-        $savedVenv = if ($env:BHASHASETU_VENV_DIR) { $env:BHASHASETU_VENV_DIR } else { Join-Path $savedBase ".venv" }
-        $savedPy = Join-Path $savedVenv "Scripts\python.exe"
-        if (Test-Path $savedPy) {
-            Write-Host "`n=== Existing install detected ===" -ForegroundColor Green
-            Write-Host "  Base dir : $savedBase" -ForegroundColor Gray
-            Write-Host "  Python   : $savedPy" -ForegroundColor Gray
-            Write-Host "  Starting BhashaSetu (use -Reinstall to redo setup)..." -ForegroundColor Cyan
-            Push-Location $backend
-            try {
-                Start-Process "http://127.0.0.1:8000"
-                & $savedPy -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-            } finally {
-                Pop-Location
-            }
-            exit 0
+    if (-not $savedBase) { return $null }
+    $savedVenv = if ($env:BHASHASETU_VENV_DIR) { $env:BHASHASETU_VENV_DIR } else { Join-Path $savedBase ".venv" }
+    $savedPy = Join-Path $savedVenv "Scripts\python.exe"
+    if ((Test-Path $savedPy) -and (Test-CommandHealthy $savedPy @("--version"))) { return $savedPy }
+    return $null
+}
+
+function Test-FrontendBuilt {
+    return (Test-Path (Join-Path $backend "app\static\index.html"))
+}
+
+function Invoke-FrontendBuild {
+    Step "Building React frontend"
+    Push-Location $frontend
+    npm install
+    npm run build
+    Pop-Location
+    Info "React UI built into backend/app/static."
+}
+
+# Adaptive menu shown only for a bare `install.ps1` (no flags, not env-driven). Returns a
+# hashtable describing the chosen action.
+function Show-InstallMenu {
+    $existingPy = Get-ExistingInstallPython
+    if ($existingPy) {
+        $modeVal = Get-EnvValue "BHASHASETU_ENABLE_MODELS"
+        $modeText = if ($modeVal -eq "true") { "LIVE (real ML models)" } else { "DEMO (no heavy ML)" }
+        $savedBase = Get-EnvValue "BHASHASETU_BASE_DIR"
+        Write-Host "`n=== BhashaSetu - existing install detected ===" -ForegroundColor Green
+        Write-Host "  Base dir : $savedBase" -ForegroundColor Gray
+        Write-Host "  Mode     : $modeText" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "  [1] Start the server (default)" -ForegroundColor White
+        Write-Host "  [2] Reinstall - Demo mode" -ForegroundColor White
+        Write-Host "  [3] Reinstall - Live mode (real ML models, needs internet)" -ForegroundColor White
+        Write-Host "  [Q] Quit" -ForegroundColor White
+        $choice = Read-Host "Choose an option [1]"
+        switch ($choice.Trim().ToUpper()) {
+            "2" { return @{ Action = "reinstall"; Live = $false } }
+            "3" { return @{ Action = "reinstall"; Live = $true } }
+            "Q" { return @{ Action = "quit" } }
+            default { return @{ Action = "start" } }
+        }
+    } else {
+        Write-Host "`n=== BhashaSetu - first-time setup ===" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "  [1] Install Demo mode and start (default, no heavy ML)" -ForegroundColor White
+        Write-Host "  [2] Install Live mode and start (real ML models, needs internet)" -ForegroundColor White
+        Write-Host "  [3] Install Demo mode without starting" -ForegroundColor White
+        Write-Host "  [Q] Quit" -ForegroundColor White
+        $choice = Read-Host "Choose an option [1]"
+        switch ($choice.Trim().ToUpper()) {
+            "2" { return @{ Action = "install"; Live = $true; Run = $true } }
+            "3" { return @{ Action = "install"; Live = $false; Run = $false } }
+            "Q" { return @{ Action = "quit" } }
+            default { return @{ Action = "install"; Live = $false; Run = $true } }
         }
     }
 }
 
+if ($noFlagsPassed -and -not $env:BHASHASETU_TARGET_DIR) {
+    # --- Interactive menu path (bare `install.ps1`) ---
+    $menu = Show-InstallMenu
+    switch ($menu.Action) {
+        "quit" {
+            Write-Host "  Cancelled." -ForegroundColor Yellow
+            exit 0
+        }
+        "start" {
+            $existingPy = Get-ExistingInstallPython
+            if (-not (Test-FrontendBuilt)) {
+                Warn "Frontend build missing; rebuilding the UI before starting..."
+                Invoke-FrontendBuild
+            }
+            Write-Host "`n=== Starting BhashaSetu ===" -ForegroundColor Green
+            Start-BhashaSetu $existingPy
+            exit 0
+        }
+        "reinstall" {
+            $reinstallMode = $true
+            $liveMode = [bool]$menu.Live
+            $effectiveRun = $true
+            # Reuse the existing install location instead of re-prompting for it.
+            $savedBase = Get-EnvValue "BHASHASETU_BASE_DIR"
+            if ($savedBase) { $targetDirOverride = Split-Path -Parent $savedBase }
+        }
+        "install" {
+            $liveMode = [bool]$menu.Live
+            $effectiveRun = [bool]$menu.Run
+        }
+    }
+} elseif ((-not $reinstallMode) -and (-not $liveMode) -and (-not $BuildFrontend)) {
+    # --- Flag/automation fast-launch: a healthy existing install just starts ---
+    $existingPy = Get-ExistingInstallPython
+    if ($existingPy -and (Test-FrontendBuilt)) {
+        Write-Host "`n=== Existing install detected ===" -ForegroundColor Green
+        if ($effectiveRun) {
+            Write-Host "  Starting BhashaSetu (use -Reinstall to redo setup)..." -ForegroundColor Cyan
+            Start-BhashaSetu $existingPy
+        } else {
+            Write-Host "  Existing install is healthy. Start was skipped because -NoRun was used." -ForegroundColor Cyan
+        }
+        exit 0
+    }
+}
+
 $targetDir = $null
-if ($env:BHASHASETU_TARGET_DIR) {
+if ($targetDirOverride) {
+    $targetDir = $targetDirOverride
+} elseif ($env:BHASHASETU_TARGET_DIR) {
     $targetDir = $env:BHASHASETU_TARGET_DIR
 } else {
-    $targetDir = Read-Host "Choose a directory for the installation (press Enter to use the project folder: $root)"
+    $targetDir = Read-Host "Choose a directory for the installation (press Enter to use the project folder: $defaultTargetRoot)"
 }
-$targetDir = $targetDir.Trim().Trim("'")
+$targetDir = $targetDir.Trim().Trim('"')
 if (-not $targetDir -or $targetDir -match '^\s*$') {
     # Default to the project root so a plain Enter just works.
-    $targetDir = $root
+    $targetDir = $defaultTargetRoot
 }
 # Normalize a bare drive letter ("D" or "D:") to a rooted path ("D:\").
 # Without this, Join-Path treats it as relative and resolves against the current
@@ -118,7 +312,7 @@ if ($targetDir -match '^[A-Za-z]$') {
 } elseif ($targetDir -match '^[A-Za-z]:$') {
     $targetDir = "$targetDir" + "\"
 }
-if (-not ($targetDir -match '^[A-Za-z]:\\' -or $targetDir -match '^\\\\')) {
+if (-not ($targetDir -match '^[A-Za-z]:\\') -or $targetDir -match '\\\\') {
     throw "The installation path '$targetDir' is not an absolute path. Enter a full path like D:\ or D:\apps."
 }
 
@@ -139,34 +333,30 @@ $cacheDir = if ($env:BHASHASETU_PIP_CACHE_DIR) { $env:BHASHASETU_PIP_CACHE_DIR }
 # These locals are only for install-time dir creation and the summary display.
 $modelsDir = Join-Path $baseDir "models"
 $dataDir = Join-Path $baseDir "data"
+$tmpDir = if ($env:BHASHASETU_TMP_DIR) { $env:BHASHASETU_TMP_DIR } else { Join-Path $baseDir "tmp" }
 
 $env:PIP_CACHE_DIR = $cacheDir
 $env:PIP_DOWNLOAD_CACHE = $cacheDir
-$env:BHASHASETU_BASE_DIR = $baseDir
 if ($env:BHASHASETU_TMP_DIR) {
     $env:TEMP = $env:BHASHASETU_TMP_DIR
     $env:TMP = $env:BHASHASETU_TMP_DIR
 } else {
-    $tmpDir = Join-Path $baseDir "tmp"
     $env:TEMP = $tmpDir
     $env:TMP = $tmpDir
 }
 
-function Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Green }
-function Info($msg) { Write-Host "  $msg" -ForegroundColor Gray }
-function Warn($msg) { Write-Host "  ! $msg" -ForegroundColor Yellow }
-
 Write-Host @"
-     __    _               __           ______     __       
-    / /_  / /_  ____  _____/ /_  ____   / ____/____/ /___  __ 
-   / __ \/ __ \/ __ `/ ___/ __ \/ __ ` / /__ / _ \ __/ / / / 
-  / /_/ / / / / /_/ (__  ) / / / /_/ /  ___//  __/ /_/ /_/ /  
- /_.___/_/ /_/\__,_/____/_/ /_/\__,_/  \___/\___/\__/\__,_/   
 
-  Language Bridge for BAIF - Marathi . Hindi . English
+ ____  _               _           ____       _
+| __ )| |__   __ _ ___| |__   __ _/ ___|  ___| |_ _   _
+|  _ \| '_ \ / _` / __| '_ \ / _` \___ \ / _ \ __| | | |
+| |_) | | | | (_| \__ \ | | | (_| |___) |  __/ |_| |_| |
+|____/|_| |_|\__,_|___/_| |_|\__,_|____/ \___|\__|\__,_|
+
+ Language Bridge for BAIF - Marathi . Hindi . English
 "@ -ForegroundColor Cyan
 
-# -- 1. Python -------------------------------------------------------------------
+# -- 1. Python -----------------------------------------------------------------
 Step "Checking Python"
 $pythonCmd = $null
 foreach ($c in @("py", "python")) {
@@ -220,21 +410,61 @@ if ($pyMajor -ne 3 -or $pyMinor -lt 10 -or $pyMinor -gt 13) {
     Warn "Example: py -3.12 -m venv 'D:\translationService\.venv'"
     exit 1
 }
-
 Info "Python version $pyVersionOutput is supported."
 
-# -- 2. Virtual environment ------------------------------------------------------
+# -- 1b. Node.js / npm ---------------------------------------------------------
+Step "Checking Node.js"
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Warn "Node.js not found. The new UI build is required."
+    Warn "Install Node.js 18+ from https://nodejs.org and rerun this script."
+    exit 1
+}
+if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+    Warn "npm not found. The new UI build is required."
+    Warn "Install Node.js 18+ from https://nodejs.org and rerun this script."
+    exit 1
+}
+Info "Node.js and npm are available."
+
+# -- 2. Virtual environment ----------------------------------------------------
 Step "Creating virtual environment"
 $driveInfo = Get-PSDrive $targetDrive -ErrorAction SilentlyContinue
 if ($driveInfo) {
     $freeGb = "{0:N2}" -f ($driveInfo.Free / 1GB)
     Info "Selected drive $($driveInfo.Name): has $freeGb GB free space."
-    if ($driveInfo.Free -lt 5GB) {
-        Warn "Drive $($driveInfo.Name): has less than 5GB free space."
+    $minRequiredGb = if ($liveMode) { 12 } else { 5 }
+    if ($driveInfo.Free -lt ($minRequiredGb * 1GB)) {
+        Warn "Drive $($driveInfo.Name): has less than $minRequiredGb GB free space."
         Warn "Please choose a different drive with more free space."
         exit 1
     }
 }
+
+if ($liveMode) {
+    Step "Live mode preflight"
+    Info "Checking internet reachability for package/model downloads..."
+    $pypiOk = Test-WebReachable "pypi.org"
+    $hfOk = Test-WebReachable "huggingface.co"
+    if (-not $pypiOk -or -not $hfOk) {
+        Warn "Live mode requires internet access to both pypi.org and huggingface.co."
+        Warn "Please connect to internet or rerun without -Live for demo mode."
+        exit 1
+    }
+    Info "Internet checks passed for live mode."
+}
+
+if ($reinstallMode) {
+    Step "Preparing reinstall"
+    if (Test-Path $venv) {
+        Info "Removing existing virtual environment: $venv"
+        Remove-Item -Recurse -Force $venv
+    }
+    if (Test-Path $cacheDir) {
+        Info "Clearing pip cache: $cacheDir"
+        Remove-Item -Recurse -Force $cacheDir
+    }
+}
+
 if (Test-Path $py) {
     Info "venv already exists at $venv"
 } else {
@@ -242,12 +472,12 @@ if (Test-Path $py) {
     New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
     New-Item -ItemType Directory -Force -Path $modelsDir | Out-Null
     New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-    New-Item -ItemType Directory -Force -Path $env:TEMP | Out-Null
+    New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
     & $pythonCmd -m venv $venv
     Info "Created $venv"
 }
 
-# -- 3. Rust toolchain (only needed if a wheel must be built) --------------------
+# -- 3. Rust toolchain (only needed if a wheel must be built) ----
 Step "Checking Rust toolchain"
 if ((Get-Command cargo -ErrorAction SilentlyContinue) -and (Get-Command rustc -ErrorAction SilentlyContinue)) {
     Info "Rust toolchain detected."
@@ -259,7 +489,7 @@ if ((Get-Command cargo -ErrorAction SilentlyContinue) -and (Get-Command rustc -E
     Warn "install Rust from https://rustup.rs/ then rerun this script."
 }
 
-# -- 4. Core dependencies --------------------------------------------------------
+# -- 4. Core dependencies ------------------------------------------------------
 Step "Installing core dependencies"
 & $py -m pip install --upgrade pip | Out-Null
 # Prefer prebuilt wheels so pydantic-core etc. never compile (avoids needing Rust).
@@ -270,76 +500,96 @@ if ($LASTEXITCODE -ne 0) {
 }
 Info "Core API dependencies installed."
 
-# -- 5. FFmpeg -------------------------------------------------------------------
+# -- 5. FFmpeg -----------------------------------------------------------------
 Step "Checking FFmpeg (needed for real audio/video)"
 if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
-    Info "FFmpeg is available."
+    ffmpeg -version | Select-Object -First 1 | ForEach-Object { Info "Found $_" }
 } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
     Info "FFmpeg not found. Installing via winget..."
     winget install --id Gyan.FFmpeg -e --accept-source-agreements --accept-package-agreements
+    if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+        ffmpeg -version | Select-Object -First 1 | ForEach-Object { Info "Installed $_" }
+    } else {
+        Warn "FFmpeg install may need a new terminal session to refresh PATH."
+    }
 } else {
     Warn "FFmpeg not found and winget unavailable. Install manually: https://www.gyan.dev/ffmpeg/builds/"
 }
 
-# -- 6. Live mode (optional) -----------------------------------------------------
-if ($Live) {
+# -- 6. Live mode (optional) ---------------------------------------------------
+if ($liveMode) {
     Step "Installing ML stack (live mode)"
+    # Install torch with the best available build for the detected GPU (or CPU-only if none). Returns "cuda" or "cpu".
+    $torchBuild = Install-Torch $py
+    Info "PyTorch build: $torchBuild"
     & $py -m pip install -r (Join-Path $backend "requirements-ml.txt")
     Step "Downloading open models"
     Info "Models will be stored in $modelsDir"
     & $py (Join-Path $PSScriptRoot "download_models.py")
 }
 
-# -- Persist install paths + mode to backend/.env --------------------------------
+# -- Persist install paths + mode to backend/.env ------------------------------
 Step "Saving configuration"
-$enableModels = if ($Live) { "true" } else { "false" }
+$enableModels = if ($liveMode) { "true" } else { "false" }
 # Single source of truth: everything (data, models, tmp) derives from BASE_DIR.
 Set-EnvValues @{
-    "BHASHASETU_BASE_DIR"      = $baseDir
+    "BHASHASETU_BASE_DIR"     = $baseDir
     "BHASHASETU_ENABLE_MODELS" = $enableModels
-    "BHASHASETU_OFFLINE"       = "false"
+    "BHASHASETU_OFFLINE"      = "false"
+    "BHASHASETU_DEVICE"        = "auto"
 }
 Info "Wrote settings to $envFile"
 
-# -- 7. Frontend build (optional) ------------------------------------------------
-if ($BuildFrontend) {
-    Step "Building React frontend"
-    if (Get-Command npm -ErrorAction SilentlyContinue) {
-        Push-Location $frontend
-        npm install
-        npm run build
-        Pop-Location
-        Info "React UI built into backend/app/static."
-    } else {
-        Warn "npm not found. Skipping. The bundled UI will be served instead."
-    }
+# -- 7. Frontend build ---------------------------------------------------------
+Step "Building React frontend"
+Push-Location $frontend
+npm install
+npm run build
+Pop-Location
+Info "React UI built into backend/app/static."
+
+$reactIndex = Join-Path $backend "app\static\index.html"
+if (-not (Test-Path $reactIndex)) {
+    Warn "React build completed, but backend/app/static/index.html was not found."
+    Warn "Please check frontend build output and rerun install."
+    exit 1
 }
 
-# -- Done ------------------------------------------------------------------------
+# -- 8. Smoke check ------------------------------------------------------------
+Step "Smoke check"
+& $py -c "import fastapi, uvicorn; print('Python env check: OK')"
+if ($LASTEXITCODE -ne 0) {
+    Warn "Environment smoke check failed. Re-run with -Reinstall after checking Python and network access."
+    exit 1
+}
+
+$modeLabel = if ($liveMode) { "LIVE" } else { "DEMO" }
+$uiLabel = "React build"
+$startLabel = if ($effectiveRun) { "Auto-start" } else { "Manual start" }
+
+# -- Done ----------------------------------------------------------------------
 Step "Setup complete"
 Write-Host ""
-Write-Host "  Start BhashaSetu:" -ForegroundColor Green
-Write-Host "    cd backend" -ForegroundColor White
-if ($Live) {
-    Write-Host "    `$env:BHASHASETU_ENABLE_MODELS = 'true'" -ForegroundColor White
-}
-$startupCmd = '    & "' + $py + '" -m uvicorn app.main:app --host 127.0.0.1 --port 8000'
-Write-Host $startupCmd -ForegroundColor White
+Write-Host "  Mode         : $modeLabel" -ForegroundColor White
+Write-Host "  UI           : $uiLabel" -ForegroundColor White
+Write-Host "  Start mode   : $startLabel" -ForegroundColor White
 Write-Host ""
-Write-Host "  Then open http://127.0.0.1:8000" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "    Install base : $baseDir" -ForegroundColor Gray
-Write-Host "    Data folder  : $dataDir" -ForegroundColor Gray
-Write-Host "    Models folder: $modelsDir" -ForegroundColor Gray
-Write-Host "    (Rerun this script anytime to relaunch the API.)" -ForegroundColor Gray
+Write-Host "  Install base : $baseDir" -ForegroundColor Gray
+Write-Host "  Data folder  : $dataDir" -ForegroundColor Gray
+Write-Host "  Models folder: $modelsDir" -ForegroundColor Gray
+Write-Host "  (Rerun this script anytime to relaunch the API.)" -ForegroundColor Gray
 Write-Host ""
 
-# -- 8. Auto-start (optional) ----------------------------------------------------
-if ($Run) {
+# -- 9. Auto-start -------------------------------------------------------------
+if ($effectiveRun) {
     Step "Starting BhashaSetu"
-    if ($Live) { $env:BHASHASETU_ENABLE_MODELS = "true" }
-    Push-Location $backend
-    Start-Process "http://127.0.0.1:8000"
-    & $py -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-    Pop-Location
+    Start-BhashaSetu $py
+} else {
+    Write-Host "  Start BhashaSetu manually:" -ForegroundColor Green
+    Write-Host "    cd backend" -ForegroundColor White
+    $startupCmd = "    & '" + $py + "' -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+    Write-Host $startupCmd -ForegroundColor White
+    Write-Host ""
+    Write-Host "  Then open http://127.0.0.1:8000" -ForegroundColor Cyan
+    Write-Host "  Optional check after start: http://127.0.0.1:8000/api/health" -ForegroundColor Gray
 }

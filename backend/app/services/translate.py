@@ -21,6 +21,17 @@ from app.languages import get_language
 
 logger = logging.getLogger(__name__)
 
+def _use_cuda() -> bool:
+    """Return True if the user requested CUDA and it is available."""
+    if settings.device == "cuda":
+        return True
+    if settings.device != "auto":
+        return False
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except Exception:
+        return False
 
 def _hf_auth() -> dict:
     """Return kwargs to authenticate with Hugging Face for gated repos.
@@ -105,7 +116,7 @@ class IndicTrans2Backend(TranslatorBackend):
             tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True, **_hf_auth())
             mdl = AutoModelForSeq2SeqLM.from_pretrained(model_name, trust_remote_code=True, **_hf_auth())
             mdl.eval()
-            if settings.device == "cuda":
+            if _use_cuda():
                 mdl = mdl.to("cuda")
             self._models[model_name] = (tok, mdl, torch)
         return self._models[model_name]
@@ -130,11 +141,14 @@ class IndicTrans2Backend(TranslatorBackend):
             chunk = sentences[i : i + size]
             batch = ip.preprocess_batch(chunk, src_lang=src_flores, tgt_lang=tgt_flores)
             inputs = tok(batch, truncation=True, padding="longest", return_tensors="pt", max_length=256)
-            if settings.device == "cuda":
+            if _use_cuda():
                 inputs = {k: v.to("cuda") for k, v in inputs.items()}
-            with torch.no_grad():
+            with torch.inference_mode():
                 generated = mdl.generate(
-                    **inputs, max_length=256, num_beams=5, num_return_sequences=1
+                    **inputs, 
+                    max_length=256,
+                    num_beams=max(1, settings.mt_num_beams), 
+                    num_return_sequences=1
                 )
             decoded = tok.batch_decode(generated, skip_special_tokens=True)
             outputs.extend(ip.postprocess_batch(decoded, lang=tgt_flores))
@@ -170,6 +184,9 @@ class NLLBBackend(TranslatorBackend):
             logger.info("Loading NLLB model '%s'...", settings.nllb_model)
             self._tok = AutoTokenizer.from_pretrained(settings.nllb_model)
             self._mdl = AutoModelForSeq2SeqLM.from_pretrained(settings.nllb_model)
+            self._mdl.eval()
+            if _use_cuda():
+                self._mdl = self._mdl.to("cuda")
             self._torch = torch
         return self._tok, self._mdl, self._torch
 
@@ -184,8 +201,15 @@ class NLLBBackend(TranslatorBackend):
         for i in range(0, len(sentences), size):
             chunk = sentences[i : i + size]
             inputs = tok(chunk, return_tensors="pt", padding=True, truncation=True, max_length=256)
-            with torch.no_grad():
-                generated = mdl.generate(**inputs, forced_bos_token_id=tgt_id, max_length=256, num_beams=5)
+            if _use_cuda():
+                inputs = {k: v.to("cuda") for k, v in inputs.items()}
+            with torch.inference_mode():
+                generated = mdl.generate(
+                    **inputs, 
+                    forced_bos_token_id=tgt_id, 
+                    max_length=256, 
+                    num_beams=max(1, settings.mt_num_beams),
+                )
             outputs.extend(tok.batch_decode(generated, skip_special_tokens=True))
             del inputs, generated
             logger.info("NLLB translated %d/%d sentences", min(i + size, len(sentences)), len(sentences))

@@ -6,10 +6,10 @@ keeps BAIF-specific vocabulary (crop names, cattle breeds, scheme names) consist
 across every translation.
 
 Mechanism (term protection):
-  1. Before translation, source-language glossary terms are replaced with stable
-     placeholder tokens so the MT model cannot mistranslate them.
-  2. After translation, each placeholder is restored with the *canonical* target
-     term from the glossary.
+1. Before translation, source-language glossary terms are replaced with stable
+   placeholder tokens so the MT model cannot mistranslate them.
+2. After translation, each placeholder is restored with the *canonical* target
+   term from the glossary.
 
 This guarantees terminology consistency regardless of translation direction. In
 demo mode the placeholders round-trip perfectly; with real MT models it is a
@@ -22,7 +22,7 @@ import re
 import threading
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import BACKEND_DIR
@@ -34,7 +34,24 @@ _lock = threading.Lock()
 _cache: list[dict] | None = None
 
 
-# --- Seeding ----------------------------------------------------------
+def _extract_forms(item: dict) -> dict[str, str]:
+    """Read per-language terms from a seed entry.
+
+    Accepts either a nested `{"forms": {code: term}}` object or flat top-level
+    language-code keys (e.g. `{"en": ..., "hi": ...}`). Only codes present in the
+    language registry are kept, so the seed stays language-agnostic.
+    """
+    from app.languages import SUPPORTED_CODES
+
+    raw = item.get("forms") if isinstance(item.get("forms"), dict) else item
+    return {
+        code: str(raw[code]).strip()
+        for code in SUPPORTED_CODES
+        if raw.get(code) and str(raw[code]).strip()
+    }
+
+
+# --- Seeding ------------------------------------------------------------------
 def seed_glossary_if_empty() -> int:
     """Populate the glossary table from the seed file on first run."""
     with session_scope() as session:
@@ -46,12 +63,13 @@ def seed_glossary_if_empty() -> int:
         data = json.loads(_SEED_FILE.read_text(encoding="utf-8"))
         count = 0
         for item in data.get("entries", []):
+            forms = _extract_forms(item)
+            if not forms:
+                continue
             session.add(
                 GlossaryEntry(
                     category=item.get("category", "general"),
-                    en=item["en"].strip(),
-                    hi=item["hi"].strip(),
-                    mr=item["mr"].strip(),
+                    forms=forms,
                     note=item.get("note"),
                 )
             )
@@ -59,36 +77,44 @@ def seed_glossary_if_empty() -> int:
         _invalidate_cache()
         return count
 
-
-# --- Cache ------------------------------------------------------------
+# --- Cache --------------------------------------------------------------------
 def _invalidate_cache() -> None:
     global _cache
     with _lock:
         _cache = None
 
-
 def _terms() -> list[dict]:
-    """Cached list of glossary terms, longest English form first."""
+    """Cached list of glossary term maps ({lang_code: term}), longest form first."""
     global _cache
     with _lock:
         if _cache is None:
             with session_scope() as session:
                 rows = session.scalars(select(GlossaryEntry)).all()
-                _cache = [
-                    {"en": r.en, "hi": r.hi, "mr": r.mr}
-                    for r in rows
-                ]
-                _cache.sort(key=lambda e: len(e["en"]), reverse=True)
+                _cache = [dict(r.forms or {}) for r in rows]
+                _cache.sort(
+                    key=lambda forms: max((len(v) for v in forms.values()), default=0),
+                    reverse=True,
+                )
         return _cache
 
-
-# --- CRUD -------------------------------------------------------------
+# --- CRUD ---------------------------------------------------------------------
 def list_entries(session: Session) -> list[GlossaryEntry]:
+    en_term = func.coalesce(func.json_extract(GlossaryEntry.forms, "$.en"), "")
+    return list(
+        session.scalars(
+            select(GlossaryEntry).order_by(
+                func.lower(GlossaryEntry.category),
+                func.lower(en_term),
+                GlossaryEntry.created_at,
+            )
+        )
+    )
     return list(session.scalars(select(GlossaryEntry).order_by(GlossaryEntry.category, GlossaryEntry.en)))
 
 
-def add_entry(session: Session, *, category: str, en: str, hi: str, mr: str, note: str | None = None) -> GlossaryEntry:
-    entry = GlossaryEntry(category=category, en=en.strip(), hi=hi.strip(), mr=mr.strip(), note=note)
+def add_entry(session: Session, *, category: str, forms: dict[str, str], note: str | None = None) -> GlossaryEntry:
+    clean = {code: (value or "").strip() for code, value in forms.items() if (value or "").strip()}
+    entry = GlossaryEntry(category=category, forms=clean, note=note)
     session.add(entry)
     session.flush()
     _invalidate_cache()
@@ -104,14 +130,17 @@ def delete_entry(session: Session, entry_id: str) -> bool:
     return True
 
 
-# --- Term protection --------------------------------------------------
+def count(session: Session) -> int:
+    return session.query(GlossaryEntry).count()
+
+# --- Term protection ----------------------------------------------------------
 _PLACEHOLDER = "GLS{}GLS"  # alphanumeric tokens survive most tokenisers
 
 
 def _word_regex(term: str) -> re.Pattern:
     # \b works for Latin; for Devanagari we fall back to a plain escaped match.
     if term.isascii():
-        return re.compile(rf"\b{re.escape(term)}\b", re.IGNORECASE)
+        return re.compile(rf"\b({re.escape(term)})\b", re.IGNORECASE)
     return re.compile(re.escape(term))
 
 
