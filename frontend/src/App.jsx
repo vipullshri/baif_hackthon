@@ -119,9 +119,9 @@ export default function App() {
       <footer className="border-t border-white/10 mt-8">
         <div className="mx-auto max-w-6xl px-4 py-6 flex flex-wrap items-center gap-3 text-sm text-sand-500/50">
           <BridgeIcon className="w-6 h-6" />
-          <span>BhashaSetu - offline media translation for BAIF.</span>
+          <span>BhashaSetu - media translation.</span>
           <span className="ml-auto flex items-center gap-1.5">
-            <Github className="w-4 h-4" /> 100% open-source · Marathi · Hindi · English
+            <Github className="w-4 h-4" /> Marathi · Hindi · English
           </span>
         </div>
       </footer>
@@ -143,7 +143,7 @@ function StatusPill({ health }) {
       )}
       <span className={`chip ${demo ? 'border-saffron-500/30 bg-saffron-500/10 text-saffron-200' : 'border-leaf-500/30 bg-leaf-500/10 text-leaf-200'}`}>
         <span className={`w-2 h-2 rounded-full ${demo ? 'bg-saffron-400' : 'bg-leaf-400'} animate-pulse`} />
-        {demo ? 'Demo mode' : 'Live models'}
+        {demo ? 'Demo mode' : 'Live'}
       </span>
     </div>
   )
@@ -154,11 +154,11 @@ function Hero() {
     <section className="relative mb-10 overflow-hidden rounded-3xl card p-8 md:p-12 deva-watermark">
       <div className="relative z-10 max-w-2xl">
         <div className="chip mb-5 border-saffron-500/30 bg-saffron-500/10 text-saffron-200">
-          <span className="w-2 h-2 rounded-full bg-saffron-400 animate-pulse" /> Built for BAIF · On-premises
+          <span className="w-2 h-2 rounded-full bg-saffron-400 animate-pulse" /> Built to bring languages closer
         </div>
         <h1 className="text-4xl md:text-5xl font-extrabold leading-[1.1] text-balance">
-          Bridge every language.<br />
-          <span className="gradient-text">Right on your machine.</span>
+          Language without barriers.<br />
+          <span className="gradient-text">Connect with clarity.</span>
         </h1>
         <p className="mt-4 text-lg text-sand-200/80 max-w-xl">
           Transcribe, translate, voice-over and caption <b>text, audio &amp; video</b> across
@@ -168,7 +168,6 @@ function Hero() {
           <span className="chip"><Type className="w-3.5 h-3.5 text-leaf-300" /> Text</span>
           <span className="chip"><Mic className="w-3.5 h-3.5 text-leaf-300" /> Audio</span>
           <span className="chip"><FileVideo className="w-3.5 h-3.5 text-leaf-300" /> Video</span>
-          <span className="chip"><WifiOff className="w-3.5 h-3.5 text-saffron-300" /> Works offline</span>
         </div>
       </div>
       <div className="pointer-events-none absolute -right-10 -bottom-10 opacity-20 md:opacity-30">

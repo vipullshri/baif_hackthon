@@ -57,17 +57,13 @@ export function AboutPage({ health }) {
 
         <div className="card p-6">
           <h3 className="font-bold text-lg flex items-center gap-2 mb-4">
-            <ShieldCheck className="w-5 h-5 text-saffron-300" /> Built for BAIF
+            <ShieldCheck className="w-5 h-5 text-saffron-300" /> Your translation workspace
           </h3>
           <ul className="space-y-3 text-sm text-sand-200/90">
             <li className="flex gap-2"><Sparkles className="w-4 h-4 text-leaf-300 mt-0.5 shrink-0" />
               100% open-source models — <b>no licensing or usage costs</b>.</li>
             <li className="flex gap-2"><WifiOff className="w-4 h-4 text-leaf-300 mt-0.5 shrink-0" />
               Runs fully <b>on-premises &amp; offline</b> after a one-time model download.</li>
-            <li className="flex gap-2"><HardDrive className="w-4 h-4 text-leaf-300 mt-0.5 shrink-0" />
-              Tuned for <b>i5 / 16 GB / CPU</b> with int8 quantisation.</li>
-            <li className="flex gap-2"><Server className="w-4 h-4 text-leaf-300 mt-0.5 shrink-0" />
-              Single deployable — one server hosts the API <b>and</b> this UI.</li>
             <li className="flex gap-2"><ShieldCheck className="w-4 h-4 text-leaf-300 mt-0.5 shrink-0" />
               No data leaves the machine — sensitive field recordings stay private.</li>
           </ul>
